@@ -1,0 +1,271 @@
+; ==========================================================
+; Pen Plot — pen-plotter G-code (no slicing, no extrusion, no heat)
+; https://penplot.gearup.wtf
+; Title: sample.svg
+; Generated: 2026-09-25T12:00:00.000Z
+; Printer: Creality Ender-5 Pro — bed 220 x 220 mm, nozzle X 0..220 Y 0..220
+; Pen offset from nozzle: X -28 Y 6 mm (coordinates below are NOZZLE positions)
+; Pen-down Z 5.3 | pen-up Z 8.3 | safe Z 15 | lowest Z in file 5.3
+; Speeds (mm/min): draw 1500, travel 4800, Z 300
+; Dwell: 150 ms after pen down, 80 ms after pen up
+; Corners: no special handling
+; Bounds: reachable pen area X 0..192 Y 6..220 (clip)
+; Paths: 13 | pen lifts: 12 | draw 1486 mm | travel 378 mm
+; Estimated time: 1m 47s (approx., ignores acceleration)
+; Lines: 271
+; ==========================================================
+; ---- start G-code ----
+G21 ; millimetres
+G90 ; absolute positioning
+M104 S0 ; hotend heater OFF (pen plotting, no heat)
+M140 S0 ; bed heater OFF
+M107 ; part fan off
+G28 ; home all axes (Ender-5: Z homes with the bed at the top)
+G0 Z15 F300 ; drop the bed to safe travel Z before any XY move
+; ---- first move after homing: lift to safe Z ----
+G0 Z15 F300 ; safe travel Z
+; path 1/13
+G0 X198.337 Y161.05 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X200.735 Y159.829 F1500
+G1 X202.638 Y157.926
+G1 X203.859 Y155.528
+G1 X204.28 Y152.87
+G1 X204.28 Y61.13
+G1 X203.859 Y58.472
+G1 X202.638 Y56.074
+G1 X200.735 Y54.171
+G1 X198.337 Y52.95
+G1 X195.679 Y52.529
+G1 X46.601 Y52.529
+G1 X43.943 Y52.95
+G1 X41.545 Y54.171
+G1 X39.643 Y56.074
+G1 X38.421 Y58.472
+G1 X38 Y61.13
+G1 X38 Y152.87
+G1 X38.421 Y155.528
+G1 X39.643 Y157.926
+G1 X41.545 Y159.829
+G1 X43.943 Y161.05
+G1 X46.601 Y161.471
+G1 X195.679 Y161.471
+G1 X198.337 Y161.05
+; path 2/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X164.144 Y144.27 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X172.744 Y118.468 F1500
+G1 X199.98 Y118.468
+G1 X178.478 Y102.7
+G1 X185.645 Y76.898
+G1 X164.144 Y92.666
+G1 X142.642 Y76.898
+G1 X149.809 Y102.7
+G1 X128.307 Y118.468
+G1 X155.543 Y118.468
+G1 X164.144 Y144.27
+; path 3/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X138.341 Y135.669 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X132.608 Y150.003 F1500
+G1 X126.874 Y135.669
+G1 X121.14 Y150.003
+; path 4/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X104.308 Y132.166 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X108.609 Y128.246 F1500
+G1 X112.116 Y123.602
+G1 X114.71 Y118.392
+G1 X116.303 Y112.795
+G1 X116.84 Y107
+G1 X116.303 Y101.205
+G1 X114.71 Y95.608
+G1 X112.116 Y90.398
+G1 X108.609 Y85.754
+G1 X104.308 Y81.834
+G1 X99.361 Y78.77
+G1 X93.934 Y76.668
+G1 X88.214 Y75.599
+G1 X82.394 Y75.599
+G1 X76.674 Y76.668
+G1 X71.247 Y78.77
+G1 X66.299 Y81.834
+G1 X61.999 Y85.754
+G1 X58.491 Y90.398
+G1 X55.897 Y95.608
+G1 X54.305 Y101.205
+G1 X53.768 Y107
+G1 X54.305 Y112.795
+G1 X55.897 Y118.392
+G1 X58.491 Y123.602
+G1 X61.999 Y128.246
+G1 X66.299 Y132.166
+G1 X71.247 Y135.23
+G1 X76.674 Y137.332
+G1 X82.394 Y138.401
+G1 X88.214 Y138.401
+G1 X93.934 Y137.332
+G1 X99.361 Y135.23
+G1 X104.308 Y132.166
+; path 5/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X101.072 Y134.311 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X91.038 Y116.931 F1500
+; path 6/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X92.044 Y116.277 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X94.581 Y113.74 F1500
+G1 X96.21 Y110.544
+G1 X96.771 Y107
+G1 X96.21 Y103.456
+G1 X94.581 Y100.26
+G1 X92.044 Y97.723
+G1 X88.848 Y96.094
+G1 X85.304 Y95.532
+G1 X81.76 Y96.094
+G1 X78.563 Y97.723
+G1 X76.026 Y100.26
+G1 X74.398 Y103.456
+G1 X73.836 Y107
+G1 X74.398 Y110.544
+G1 X76.026 Y113.74
+G1 X78.563 Y116.277
+G1 X81.76 Y117.906
+G1 X85.304 Y118.468
+G1 X88.848 Y117.906
+G1 X92.044 Y116.277
+; path 7/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X96.771 Y107 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X116.84 Y107 F1500
+; path 8/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X91.038 Y97.069 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X101.072 Y79.689 F1500
+; path 9/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X79.57 Y97.069 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X69.536 Y79.689 F1500
+; path 10/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X49.468 Y63.997 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X53.051 Y66.516 F1500
+G1 X56.635 Y68.7
+G1 X60.218 Y70.548
+G1 X63.802 Y72.06
+G1 X67.386 Y73.236
+G1 X70.969 Y74.075
+G1 X74.553 Y74.579
+G1 X78.137 Y74.747
+G1 X81.72 Y74.579
+G1 X85.304 Y74.075
+G1 X88.887 Y73.236
+G1 X92.471 Y72.06
+G1 X96.055 Y70.548
+G1 X99.638 Y68.7
+G1 X103.222 Y66.516
+G1 X106.806 Y63.997
+G1 X110.389 Y61.477
+G1 X113.973 Y59.293
+G1 X117.556 Y57.445
+G1 X121.14 Y55.933
+G1 X124.724 Y54.757
+G1 X128.307 Y53.918
+G1 X131.891 Y53.414
+G1 X135.475 Y53.246
+G1 X139.058 Y53.414
+G1 X142.642 Y53.918
+G1 X146.225 Y54.757
+G1 X149.809 Y55.933
+G1 X153.393 Y57.445
+G1 X156.976 Y59.293
+G1 X160.56 Y61.477
+G1 X164.144 Y63.997
+; path 11/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X161.774 Y62.809 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X158.055 Y63.678 F1500
+G1 X155.231 Y64.669
+G1 X153.41 Y65.745
+G1 X152.662 Y66.863
+G1 X153.016 Y67.982
+G1 X154.457 Y69.058
+G1 X156.932 Y70.049
+G1 X160.344 Y70.918
+G1 X164.563 Y71.631
+G1 X169.426 Y72.161
+G1 X174.746 Y72.487
+G1 X180.32 Y72.597
+G1 X185.932 Y72.487
+G1 X191.368 Y72.161
+G1 X196.418 Y71.631
+G1 X200.888 Y70.918
+G1 X204.607 Y70.049
+G1 X207.431 Y69.058
+G1 X209.252 Y67.982
+G1 X210 Y66.863
+G1 X209.646 Y65.745
+G1 X208.205 Y64.669
+G1 X205.73 Y63.678
+G1 X202.318 Y62.809
+G1 X198.099 Y62.096
+G1 X193.236 Y61.566
+G1 X187.916 Y61.24
+G1 X182.342 Y61.13
+G1 X176.73 Y61.24
+G1 X171.294 Y61.566
+G1 X166.244 Y62.096
+G1 X161.774 Y62.809
+; path 12/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X73.836 Y107 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X53.768 Y107 F1500
+; path 13/13
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+G0 X79.57 Y116.931 F4800
+G1 Z5.3 F300 ; pen down
+G4 P150 ; settle after pen down
+G1 X69.536 Y134.311 F1500
+; ---- finished: pen up ----
+G0 Z8.3 F300 ; pen up
+G4 P80 ; settle after pen up
+; ---- end G-code ----
+G0 Z8.3 F300 ; make sure the pen is lifted
+G0 Z28.3 F300 ; lower the bed away from the pen
+G0 X0 Y220 F4800 ; move the head out of the way
+M84 ; motors off

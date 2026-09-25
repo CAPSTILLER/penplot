@@ -1,0 +1,27 @@
+{
+  "name": "penplot",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Pen Plot \u2014 turn drawings into pen-plotter G-code for a 3D printer with a pen. By Capstiller / gearup.wtf",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "Pen Plot",
+  "short_name": "Pen Plot",
+  "description": "Turn drawings into pen-plotter G-code for a 3D printer with a pen. Runs entirely in your browser.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

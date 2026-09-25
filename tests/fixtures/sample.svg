@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120mm" height="80mm" viewBox="0 0 120 80">
+  <title>Pen Plot sample</title>
+  <rect x="2" y="2" width="116" height="76" rx="6"/>
+  <g transform="translate(35 40)">
+    <circle r="22"/>
+    <circle r="8"/>
+    <g id="spoke"><line x1="8" y1="0" x2="22" y2="0"/></g>
+    <use xlink:href="#spoke" transform="rotate(60)"/>
+    <use xlink:href="#spoke" transform="rotate(120)"/>
+    <use xlink:href="#spoke" transform="rotate(180)"/>
+    <use xlink:href="#spoke" transform="rotate(240)"/>
+    <use xlink:href="#spoke" transform="rotate(300)"/>
+  </g>
+  <polygon points="90,14 96,32 115,32 100,43 105,61 90,50 75,61 80,43 65,32 84,32"/>
+  <path d="M10 70 Q 30 55 50 70 T 90 70" />
+  <ellipse cx="90" cy="68" rx="20" ry="4" transform="skewX(10)"/>
+  <polyline points="60,10 64,20 68,10 72,20"/>
+</svg>
