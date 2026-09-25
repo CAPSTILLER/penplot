@@ -224,3 +224,24 @@ footer p { margin: 4px 0; }
   .grid2 { grid-template-columns: 1fr; }
   .btn-row { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------- board (copies) ---------- */
+.bed.board { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+.bed.board:active { cursor: grabbing; }
+.inst-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.inst-chip {
+  min-width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border);
+  background: linear-gradient(180deg, #1d1d1d, #111); font: 900 0.95rem var(--font); padding: 0 8px;
+}
+.inst-chip.on { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 12px rgba(212,160,23,0.3); }
+.inst-chip.bad { color: #ff8a80; border-color: #5c211c; }
+.inst-chip.on.bad { box-shadow: 0 0 0 1px var(--red); }
+.grid2.align-end { align-items: end; }
+
+/* ---------- export ---------- */
+.export-btns { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 520px) { .export-btns.two { grid-template-columns: 1.4fr 1fr; } }
+.btn.share { border-color: var(--gold-dim); color: var(--gold); }
+.note.hint { color: var(--muted); line-height: 1.4; }
+.note.hint b { color: var(--steel); }
+.note.ok-note { color: var(--green); }

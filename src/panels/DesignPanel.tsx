@@ -1,17 +1,9 @@
-import { useRef } from 'react';
+import { type ReactNode, useRef } from 'react';
 import { Num, Section, Segmented, Slider, Toggle } from '../components/Fields';
 import type { OptimizeOptions } from '../lib/optimize';
 import type { TraceMode } from '../lib/trace';
 
 export type SourceKind = 'svg' | 'image' | 'text';
-
-export interface Placement {
-  x: number;
-  y: number;
-  scale: number;
-  rotation: number;
-  mirror: boolean;
-}
 
 export interface ImageSettings {
   mode: TraceMode;
@@ -48,27 +40,15 @@ interface Props {
   onImageFile: (f: File) => void;
   text: TextSettings;
   setText: (p: Partial<TextSettings>) => void;
-  placement: Placement;
-  setPlacement: (p: Partial<Placement>) => void;
-  size: { w: number; h: number };
-  fitMargin: number;
-  setFitMargin: (v: number) => void;
-  onFit: () => void;
-  onCenter: () => void;
+  boardSection: ReactNode;
   opt: OptimizeOptions;
   setOpt: (p: Partial<OptimizeOptions>) => void;
   stats: { pathsBefore: number; pathsAfter: number; travelBefore: number; travelAfter: number };
-  boundsMode: 'clip' | 'clamp';
-  setBoundsMode: (m: 'clip' | 'clamp') => void;
-  boundsMessage: string | null;
 }
-
-const r1 = (n: number) => Math.round(n * 10) / 10;
 
 export function DesignPanel(p: Props) {
   const svgInput = useRef<HTMLInputElement>(null);
   const imgInput = useRef<HTMLInputElement>(null);
-  const { placement: pl, size } = p;
   return (
     <div className="panel-body">
       <Section title="1 · Input">
@@ -142,34 +122,9 @@ export function DesignPanel(p: Props) {
         )}
       </Section>
 
-      <Section title="2 · Place on bed" right={<span className="pill">{r1(size.w * pl.scale)} × {r1(size.h * pl.scale)} mm</span>}>
-        <div className="grid2">
-          <Num label="Center X" unit="mm" value={pl.x} step={1} onChange={(x) => p.setPlacement({ x })} decimals={1} />
-          <Num label="Center Y" unit="mm" value={pl.y} step={1} onChange={(y) => p.setPlacement({ y })} decimals={1} />
-          <Num label="Scale" unit="%" value={pl.scale * 100} min={1} max={10000} step={5} onChange={(v) => p.setPlacement({ scale: v / 100 })} decimals={1} />
-          <Num label="Width" unit="mm" value={size.w * pl.scale} min={1} max={2000} step={1} decimals={1} onChange={(w) => size.w > 0 && p.setPlacement({ scale: w / size.w })} />
-        </div>
-        <Slider label="Rotation" value={pl.rotation} min={-180} max={180} step={1} onChange={(rotation) => p.setPlacement({ rotation })} format={(v) => `${v}°`} />
-        <div className="btn-row">
-          <button type="button" className="btn" onClick={() => p.setPlacement({ rotation: ((pl.rotation + 270) % 360) - 180 })}>⟲ 90°</button>
-          <button type="button" className="btn" onClick={() => p.setPlacement({ rotation: ((pl.rotation + 450) % 360) - 180 })}>⟳ 90°</button>
-          <button type="button" className="btn" onClick={() => p.setPlacement({ mirror: !pl.mirror })}>{pl.mirror ? '⇋ Mirrored' : '⇋ Mirror'}</button>
-          <button type="button" className="btn" onClick={p.onCenter}>✛ Center</button>
-        </div>
-        <div className="fit-row">
-          <button type="button" className="btn gold" onClick={p.onFit}>⤢ Fit to area</button>
-          <Num label="Margin" unit="mm" value={p.fitMargin} min={0} max={80} step={1} onChange={p.setFitMargin} />
-        </div>
-        <Segmented
-          label="Out of bounds"
-          value={p.boundsMode}
-          onChange={p.setBoundsMode}
-          options={[{ value: 'clip', label: 'Clip outside parts' }, { value: 'clamp', label: 'Clamp to edge' }]}
-        />
-        {p.boundsMessage && <p className="warn">{p.boundsMessage}</p>}
-      </Section>
+      {p.boardSection}
 
-      <Section title="3 · Optimize pen moves">
+      <Section title="3 · Optimize pen moves (all copies together)">
         <div className="stats-row">
           <div><b>{p.stats.pathsAfter}</b><span>strokes{p.stats.pathsBefore !== p.stats.pathsAfter ? ` (from ${p.stats.pathsBefore})` : ''}</span></div>
           <div><b>{Math.round(p.stats.travelAfter)} mm</b><span>pen-up travel{p.stats.travelBefore > 0 ? ` (was ${Math.round(p.stats.travelBefore)})` : ''}</span></div>

@@ -31,13 +31,22 @@ Everything runs in the browser. There's no server, no API keys, and no uploads. 
   - **SVG**: path, line, polyline, polygon, rect (including rounded), circle, ellipse and `<use>`, with nested transforms and viewBox/units respected. Curves are flattened to a tolerance.
   - **Image**: three trace modes. *Centerline* thins ink lines to single strokes, *Outline* uses marching-squares contours and *Edges* uses Sobel plus thinning. There's a threshold slider and an optional hatch fill (spacing in real mm).
   - **Text**: Hershey Roman Simplex, a single-stroke font, so letters are drawn once rather than as outlines.
-  - **Placement**: move, scale, set width, rotate, mirror, and fit to the reachable area with a margin.
+  - **Board with multiple copies**:
+  - Place any number of copies of the design on one sheet. Each copy has its own position, width/height (with an aspect-lock toggle, or a percent), rotation and mirror.
+  - Tap or drag copies on the preview with mouse or touch. Gold corner handles scale a copy and the ⟳ knob rotates it.
+  - Copy, Paste, Duplicate and Delete buttons, plus desktop shortcuts: Ctrl/⌘+C, V, D, Delete, and arrow keys to nudge.
+  - **Repeat / grid**: rows × columns with X/Y gaps, and optional auto-fit to the bed or paper.
+  - **Paper**: presets (Letter, A4, A5, A6 or custom, portrait or landscape) drawn as an outline on the bed at a paper-origin offset.
+  - All copies export into **one** G-code file, optimized together. The out-of-reach warning and clipping are reported per copy.
+  - The layout, paper and grid settings (and the last SVG) are saved in `localStorage`.
 - **Optimization**: nearest-neighbor reordering, reversing strokes, starting loops at their nearest vertex, merging strokes whose ends touch, and dropping tiny segments and strokes. It shows pen-up travel before and after.
 - **Preview**: a true-scale bed canvas. Pen-down lines are gold, pen-up travel is dashed cyan and the unreachable area is red. The playback scrubber shows the pen tip and the nozzle position.
 - **Calibration**:
   - *Pen-height test*: a row of squares (8 by default), each one step lower in Z. Tap the first clean square to set pen-down Z. The export header lists each square's Z.
   - *Offset test*: a crosshair at bed center with X/Y labels inside a known square. Correct the offset by jogging the nozzle over the mark or by measuring the miss with a ruler.
-- **Export**: a `.gcode` file whose comment header lists the settings, estimated time and exact line count.
+- **Export**: a `.gcode` file whose comment header lists the settings, copy count, estimated time and exact line count.
+  - The download is an `application/octet-stream` Blob named `<name>.gcode`, never `.txt`, so phones don't treat it as a text file.
+  - Where the Web Share API can share files (iPhone Safari, Android Chrome), a **Share / Save to Files** button shares a real `*.gcode` File.
 
 ## Develop
 
@@ -49,6 +58,18 @@ npm run build    # tsc -b && vite build → dist/
 ```
 
 `npm test` also regenerates `samples/sample.gcode` from `tests/fixtures/sample.svg`, then parses it back to check every pen rule.
+
+Headless-Chrome end-to-end check of the real download, share, board and touch UI:
+
+```bash
+npm run build && npx vite preview --port 4179 &
+npm i --no-save puppeteer-core && node scripts/e2e.mjs   # optional args: [url] [chromePath]
+```
+
+## Getting the file onto the printer from a phone
+
+- **iPhone (Safari)**: tap **Download**. The file goes to Files → Downloads as `name.gcode`. Or tap **Share / Save to Files** and pick a folder or an app.
+- If a phone still adds `.txt`, long-press the file in Files, choose Rename, and delete the `.txt` ending before copying it to the SD card.
 
 ## Deploy (Vercel)
 

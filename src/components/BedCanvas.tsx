@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Bounds, Polyline, Pt } from '../lib/geometry';
 import type { HeightSquare } from '../lib/calibration';
+import { type Instance, type RawSize, orientedBox } from '../lib/board';
+
+/** Rotate-handle distance above the box and touch hit radius, in screen pixels. */
+export const HANDLE_PX = 26;
+export const HIT_PX = 20;
+
+export interface BoardOverlay {
+  instances: Instance[];
+  raw: RawSize;
+  selectedId: string | null;
+  badIds: Set<string>;
+  paper: Bounds | null;
+}
+
+export type BoardPointer = (type: 'down' | 'move' | 'up', pt: Pt, pxPerMm: number, e: React.PointerEvent) => void;
 import type { Profile } from '../lib/profile';
 
 export interface PreviewMove {
@@ -20,13 +35,15 @@ interface Props {
   selectedSquare?: number | null;
   onSquareClick?: (index: number) => void;
   showTravel: boolean;
+  board?: BoardOverlay;
+  onBoardPointer?: BoardPointer;
 }
 
 const GOLD = '#d4a017';
 const TRAVEL = '#38bdf8';
 const PAD = 26;
 
-export function BedCanvas({ profile, area, moves, progress, ghost, squares, selectedSquare, onSquareClick, showTravel }: Props) {
+export function BedCanvas({ profile, area, moves, progress, ghost, squares, selectedSquare, onSquareClick, showTravel, board, onBoardPointer }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(360);
@@ -97,6 +114,25 @@ export function BedCanvas({ profile, area, moves, progress, ghost, squares, sele
     g.textBaseline = 'top';
     g.fillText('FRONT', X(bw / 2), Y(0) + 14);
 
+    // paper outline (may extend past the bed)
+    if (board?.paper) {
+      const pr = board.paper;
+      g.save();
+      g.fillStyle = 'rgba(232,232,232,0.045)';
+      g.fillRect(X(pr.minX), Y(pr.maxY), (pr.maxX - pr.minX) * s, (pr.maxY - pr.minY) * s);
+      g.strokeStyle = 'rgba(232,232,232,0.55)';
+      g.lineWidth = 1.2;
+      g.setLineDash([8, 3, 2, 3]);
+      g.strokeRect(X(pr.minX), Y(pr.maxY), (pr.maxX - pr.minX) * s, (pr.maxY - pr.minY) * s);
+      g.setLineDash([]);
+      g.fillStyle = 'rgba(232,232,232,0.6)';
+      g.font = '700 9px ui-monospace, Menlo, monospace';
+      g.textAlign = 'left';
+      g.textBaseline = 'bottom';
+      g.fillText('PAPER', X(Math.max(pr.minX, 0)) + 3, Y(Math.max(pr.minY, 0)) - 3);
+      g.restore();
+    }
+
     // ghost of the unclipped design (red where it leaves the reachable area)
     if (ghost?.length) {
       g.strokeStyle = 'rgba(224,73,62,0.55)';
@@ -134,6 +170,58 @@ export function BedCanvas({ profile, area, moves, progress, ghost, squares, sele
     drawSet(0, done, 'draw', GOLD, Math.max(1.2, Math.min(2.2, s * 0.5)), []);
     if (showTravel) drawSet(0, done, 'travel', TRAVEL, 1, [5, 4]);
 
+    // copies on the board: boxes, numbers and handles for the selected one
+    if (board && board.instances.length) {
+      const off = HANDLE_PX / s;
+      g.lineWidth = 1;
+      board.instances.forEach((inst, idx) => {
+        const b = orientedBox(inst, board.raw, off);
+        const sel = inst.id === board.selectedId;
+        const bad = board.badIds.has(inst.id);
+        g.strokeStyle = bad ? 'rgba(224,73,62,0.9)' : sel ? 'rgba(212,160,23,0.95)' : 'rgba(138,138,138,0.45)';
+        g.lineWidth = sel ? 1.5 : 1;
+        g.setLineDash(sel ? [6, 4] : [3, 4]);
+        g.beginPath();
+        b.corners.forEach((c, i) => (i ? g.lineTo(X(c.x), Y(c.y)) : g.moveTo(X(c.x), Y(c.y))));
+        g.closePath();
+        g.stroke();
+        g.setLineDash([]);
+        if (board.instances.length > 1 || sel) {
+          // number badge just inside the back-left corner (the corner itself is a handle)
+          const c0 = b.corners[0], dx = b.center.x - c0.x, dy = b.center.y - c0.y, dl = Math.hypot(dx, dy) || 1;
+          const inset = Math.min(dl * 0.5, 16 / s);
+          const tl = { x: c0.x + (dx / dl) * inset, y: c0.y + (dy / dl) * inset };
+          g.fillStyle = bad ? '#e0493e' : sel ? '#d4a017' : '#5a5a5a';
+          g.beginPath();
+          g.arc(X(tl.x), Y(tl.y), 8, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = sel || bad ? '#0a0a0a' : '#e8e8e8';
+          g.font = '900 10px Inter, system-ui, sans-serif';
+          g.textAlign = 'center';
+          g.textBaseline = 'middle';
+          g.fillText(String(idx + 1), X(tl.x), Y(tl.y) + 0.5);
+        }
+        if (sel) {
+          const topMid = { x: (b.corners[0].x + b.corners[1].x) / 2, y: (b.corners[0].y + b.corners[1].y) / 2 };
+          g.strokeStyle = '#d4a017';
+          g.beginPath(); g.moveTo(X(topMid.x), Y(topMid.y)); g.lineTo(X(b.rotHandle.x), Y(b.rotHandle.y)); g.stroke();
+          g.fillStyle = '#0a0a0a';
+          g.lineWidth = 2;
+          g.beginPath(); g.arc(X(b.rotHandle.x), Y(b.rotHandle.y), 7, 0, Math.PI * 2); g.fill(); g.stroke();
+          g.fillStyle = '#d4a017';
+          g.font = '900 10px Inter, system-ui, sans-serif';
+          g.fillText('⟳', X(b.rotHandle.x), Y(b.rotHandle.y) + 0.5);
+          for (const c of b.corners) {
+            g.fillStyle = '#d4a017';
+            g.fillRect(X(c.x) - 6, Y(c.y) - 6, 12, 12);
+            g.strokeStyle = '#0a0a0a';
+            g.lineWidth = 1.5;
+            g.strokeRect(X(c.x) - 6, Y(c.y) - 6, 12, 12);
+          }
+        }
+      });
+    }
+
     // calibration square labels
     if (squares?.length) {
       g.textAlign = 'center';
@@ -165,7 +253,13 @@ export function BedCanvas({ profile, area, moves, progress, ghost, squares, sele
       g.fillStyle = m?.kind === 'travel' && done > 0 ? TRAVEL : '#22c55e';
       g.beginPath(); g.arc(X(cur.x), Y(cur.y), 4.5, 0, Math.PI * 2); g.fill();
     }
-  }, [width, height, s, X, Y, bw, bh, area, moves, progress, ghost, squares, selectedSquare, profile.penOffsetX, profile.penOffsetY, showTravel]);
+  }, [width, height, s, X, Y, bw, bh, area, moves, progress, ghost, squares, selectedSquare, profile.penOffsetX, profile.penOffsetY, showTravel, board]);
+
+  const toMm = (e: React.PointerEvent<HTMLCanvasElement>): Pt => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return { x: (e.clientX - r.left - PAD) / s, y: bh - (e.clientY - r.top - PAD) / s };
+  };
+  const dragging = useRef(false);
 
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!squares?.length || !onSquareClick) return;
@@ -180,9 +274,17 @@ export function BedCanvas({ profile, area, moves, progress, ghost, squares, sele
     <div className="bed-wrap" ref={wrapRef}>
       <canvas
         ref={canvasRef}
-        className={squares?.length ? 'bed clickable' : 'bed'}
+        className={squares?.length ? 'bed clickable' : onBoardPointer ? 'bed board' : 'bed'}
         style={{ width, height }}
         onClick={onClick}
+        onPointerDown={onBoardPointer ? (e) => {
+          dragging.current = true;
+          try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+          onBoardPointer('down', toMm(e), s, e);
+        } : undefined}
+        onPointerMove={onBoardPointer ? (e) => { if (dragging.current) onBoardPointer('move', toMm(e), s, e); } : undefined}
+        onPointerUp={onBoardPointer ? (e) => { if (dragging.current) { dragging.current = false; onBoardPointer('up', toMm(e), s, e); } } : undefined}
+        onPointerCancel={onBoardPointer ? (e) => { if (dragging.current) { dragging.current = false; onBoardPointer('up', toMm(e), s, e); } } : undefined}
         role="img"
         aria-label={`Bed preview ${bw} by ${bh} mm`}
       />

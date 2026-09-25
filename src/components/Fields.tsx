@@ -39,7 +39,7 @@ export function Num({ label, value, onChange, step = 1, min, max, unit, hint, de
           type="text"
           inputMode="decimal"
           value={text}
-          onFocus={() => setFocus(true)}
+          onFocus={(e) => { setFocus(true); const el = e.currentTarget; requestAnimationFrame(() => el.select()); }}
           onChange={(e) => {
             setText(e.target.value);
             const v = parseFloat(e.target.value.replace(',', '.'));

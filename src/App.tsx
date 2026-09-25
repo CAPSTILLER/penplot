@@ -1,23 +1,29 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Gear } from './components/Gear';
-import { BedCanvas, type PreviewMove } from './components/BedCanvas';
+import { BedCanvas, type BoardOverlay, type BoardPointer, HANDLE_PX, HIT_PX, type PreviewMove } from './components/BedCanvas';
 import { Segmented, Toggle } from './components/Fields';
-import { DesignPanel, type ImageSettings, type Placement, type SourceKind, type TextSettings } from './panels/DesignPanel';
+import { DesignPanel, type ImageSettings, type SourceKind, type TextSettings } from './panels/DesignPanel';
+import { BoardPanel } from './panels/BoardPanel';
 import { CalibratePanel, type CalibSettings } from './panels/CalibratePanel';
 import { PrinterPanel } from './panels/PrinterPanel';
-import { type Design, designCenter, fitDesign, flipY, placeDesign } from './lib/design';
+import { designCenter, flipY } from './lib/design';
+import {
+  type GridOptions, type Hit, type Instance, type PaperSettings, dragInstance, fitInstance, gridLayout, hitTest, intersect,
+  makeInstance, newId, paperRect, paperSize, resizeInstance,
+} from './lib/board';
+import { canShareGcode, downloadGcode, gcodeFileName, shareGcode, textSlug } from './lib/exportFile';
 import type { Polyline } from './lib/geometry';
 import { parseSvg } from './lib/svg';
 import { renderText } from './lib/hershey';
 import { type Gray, traceImage } from './lib/trace';
 import { loadImageGray } from './lib/image';
 import { DEFAULT_OPTIMIZE, type OptimizeOptions, optimize } from './lib/optimize';
-import { type PlotPath, fmt, fmtDuration, generateGcode } from './lib/gcode';
+import { fmt, fmtDuration, generateGcode } from './lib/gcode';
 import { parseGcode } from './lib/gcodeParse';
-import { checkBounds, nozzleToPen, reachableArea } from './lib/machine';
+import { fmtArea, nozzleToPen, reachableArea } from './lib/machine';
 import { heightTest, offsetTest } from './lib/calibration';
 import { type Profile, type ProfileStore, loadProfiles, normalizeProfile, saveProfiles } from './lib/profile';
-import { penStart } from './lib/pipeline';
+import { buildBoard, penStart } from './lib/pipeline';
 
 type Tab = 'design' | 'calibrate' | 'printer';
 
@@ -49,10 +55,21 @@ export default function App() {
   }, []);
 
   const [tab, setTab] = useState<Tab>('design');
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
 
   // ---------------------------------------------------------------- sources
-  const [source, setSourceRaw] = useState<SourceKind>('text');
-  const [svg, setSvg] = useState<{ name: string; text: string } | null>(null);
+  const [sourceState, setSourceRaw] = usePersisted<{ v: SourceKind }>('penplot.source.v1', { v: 'text' });
+  const source = sourceState.v;
+  const [svg, setSvg] = useState<{ name: string; text: string } | null>(() => {
+    try { const raw = localStorage.getItem('penplot.svg.v1'); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  });
+  useEffect(() => {
+    try {
+      if (svg && svg.text.length < 1_500_000) localStorage.setItem('penplot.svg.v1', JSON.stringify(svg));
+      else localStorage.removeItem('penplot.svg.v1');
+    } catch { /* storage full: layout still works for this session */ }
+  }, [svg]);
   const [svgTol, setSvgTol] = useState(0.1);
   const [image, setImage] = useState<{ name: string; gray: Gray; file: File; detail: number } | null>(null);
   const [imageBusy, setImageBusy] = useState(false);
@@ -61,18 +78,35 @@ export default function App() {
     mode: 'centerline', threshold: 128, invert: false, hatch: false, hatchSpacingMm: 1.5, hatchAngle: 45, detail: 400, simplify: 0.8,
   });
   const [text, setTextRaw] = usePersisted<TextSettings>('penplot.text.v1', { value: 'Pen Plot\ngearup.wtf', size: 12, letterSpacing: 0, lineHeight: 1.7, align: 'center' });
-  const [placement, setPlacementRaw] = useState<Placement>({ x: 110, y: 110, scale: 1, rotation: 0, mirror: false });
+  // ---- board: several copies of the design, persisted
+  const [layout, setLayout] = usePersisted<{ instances: Instance[]; selectedId: string | null; lock: boolean }>('penplot.layout.v1', {
+    instances: [],
+    selectedId: null,
+    lock: true,
+  });
+  const [paper, setPaperRaw] = usePersisted<PaperSettings>('penplot.paper.v1', { preset: 'none', landscape: false, customW: 200, customH: 200, originX: 0, originY: 0 });
+  const [grid, setGridRaw] = usePersisted<GridOptions>('penplot.grid.v1', { rows: 2, cols: 2, gapX: 10, gapY: 10, autoFit: true, margin: 10 });
+  const [clipboard, setClipboard] = useState<Instance | null>(null);
+  const pasteCount = useRef(0);
   const [fitMargin, setFitMargin] = usePersisted<{ v: number }>('penplot.margin.v1', { v: 10 });
   const [opt, setOptRaw] = usePersisted<OptimizeOptions>('penplot.opt.v1', DEFAULT_OPTIMIZE);
   const [boundsMode, setBoundsMode] = useState<'clip' | 'clamp'>('clip');
-  const [fitToken, setFitToken] = useState(1); // bump to auto-fit the next source geometry
+  // bump to auto-fit the next source geometry (only when the board has 0–1 copies)
+  const [fitToken, setFitToken] = useState(() => (layout.instances.length ? 0 : 1));
   const [showTravel, setShowTravel] = useState(true);
 
   const setImg = (p: Partial<ImageSettings>) => setImgRaw((o) => ({ ...o, ...p }));
   const setText = (p: Partial<TextSettings>) => setTextRaw((o) => ({ ...o, ...p }));
-  const setPlacement = (p: Partial<Placement>) => setPlacementRaw((o) => ({ ...o, ...p }));
+  const setPaper = (p: Partial<PaperSettings>) => setPaperRaw((o) => ({ ...o, ...p }));
+  const setGrid = (p: Partial<GridOptions>) => setGridRaw((o) => ({ ...o, ...p }));
+  const instances = layout.instances;
+  const selected = instances.find((i) => i.id === layout.selectedId) ?? null;
+  const setInstances = (fn: (list: Instance[]) => Instance[], selectedId?: string | null) =>
+    setLayout((l) => ({ ...l, instances: fn(l.instances), selectedId: selectedId === undefined ? l.selectedId : selectedId }));
+  const setInstance = (next: Instance) => setInstances((list) => list.map((i) => (i.id === next.id ? next : i)));
+  const select = (id: string | null) => setLayout((l) => ({ ...l, selectedId: id }));
   const setOpt = (p: Partial<OptimizeOptions>) => setOptRaw((o) => ({ ...o, ...p }));
-  const setSource = (s: SourceKind) => { setSourceRaw(s); setFitToken((t) => t + 1); };
+  const setSource = (s: SourceKind) => { setSourceRaw({ v: s }); setFitToken((t) => t + 1); };
 
   // re-decode the image when the detail setting changes
   const detail = img.detail;
@@ -88,7 +122,7 @@ export default function App() {
   const onSvgFile = async (f: File) => {
     const t = await f.text();
     setSvg({ name: f.name, text: t });
-    setSourceRaw('svg');
+    setSourceRaw({ v: 'svg' });
     setFitToken((x) => x + 1);
   };
   const onImageFile = async (f: File) => {
@@ -97,7 +131,7 @@ export default function App() {
     try {
       const gray = await loadImageGray(f, img.detail);
       setImage({ name: f.name, gray, file: f, detail: img.detail });
-      setSourceRaw('image');
+      setSourceRaw({ v: 'image' });
       setFitToken((x) => x + 1);
     } catch {
       setImageError('Could not read that image. Try a PNG or JPG.');
@@ -108,7 +142,7 @@ export default function App() {
 
   const svgParsed = useMemo(() => (svg ? parseSvg(svg.text, svgTol) : null), [svg, svgTol]);
   const imgD = useDeferredValue(img);
-  const scaleD = useDeferredValue(placement.scale);
+  const scaleD = useDeferredValue(selected?.scale ?? instances[0]?.scale ?? 1);
   const hatchScale = img.hatch && source === 'image' ? scaleD : 1;
   const textD = useDeferredValue(text);
   const sourcePaths: Polyline[] = useMemo(() => {
@@ -127,21 +161,94 @@ export default function App() {
   }, [source, svgParsed, image, imgD, textD, hatchScale]);
 
   const area = useMemo(() => reachableArea(profile), [profile]);
-  const sourceName = source === 'svg' ? svg?.name ?? 'drawing.svg' : source === 'image' ? image?.name ?? 'image' : 'text';
+  const paperBounds = useMemo(() => paperRect(paper), [paper]);
+  /** Where fit / grid auto-fit place things: the reachable part of the paper, or the reachable area. */
+  const region = useMemo(() => {
+    if (!paperBounds) return area;
+    const r = intersect(paperBounds, area);
+    return r.maxX - r.minX > 5 && r.maxY - r.minY > 5 ? r : area;
+  }, [paperBounds, area]);
+  const sourceName = source === 'svg' ? svg?.name ?? 'drawing.svg' : source === 'image' ? image?.name ?? 'image' : textSlug(text.value);
+  const raw = useMemo(() => { const c = designCenter({ name: '', paths: sourcePaths, x: 0, y: 0, scale: 1, rotation: 0 }); return { w: c.w, h: c.h }; }, [sourcePaths]);
 
-  // auto-fit when a new source arrives
+  // auto-fit when a new source arrives (a board with several copies keeps its layout)
   useEffect(() => {
     if (!fitToken || !sourcePaths.length) return;
-    const d: Design = { name: sourceName, paths: sourcePaths, ...placement, rotation: 0, mirror: false };
-    const f = fitDesign(d, area, fitMargin.v);
-    const s = source === 'text' ? Math.min(f.scale, 1) : f.scale; // don't blow text up past its set size
-    setPlacementRaw({ x: f.x, y: f.y, scale: s, rotation: 0, mirror: false });
     setFitToken(0);
+    if (layout.instances.length > 1) return;
+    const base = layout.instances[0] ?? makeInstance();
+    const f = fitInstance({ ...base, scale: 1, scaleY: 1, rotation: 0, mirror: false }, raw, region, fitMargin.v);
+    const k = source === 'text' ? Math.min(f.scale, 1) : f.scale; // don't blow text up past its set size
+    const inst = { ...f, scale: k, scaleY: k };
+    setLayout((l) => ({ ...l, instances: [inst], selectedId: inst.id }));
   }, [fitToken, sourcePaths]);
 
-  const design: Design = useMemo(() => ({ name: sourceName, paths: sourcePaths, ...placement }), [sourceName, sourcePaths, placement]);
-  const designD = useDeferredValue(design);
-  const size = useMemo(() => designCenter({ ...design, scale: 1 }), [design]);
+  // ---- board actions
+  const pasteFrom = (src: Instance) => {
+    pasteCount.current += 1;
+    const d = 8 * pasteCount.current;
+    const inst = { ...src, id: newId(), x: src.x + d, y: src.y - d };
+    setInstances((list) => [...list, inst], inst.id);
+  };
+  const actions = {
+    copy: () => { if (selected) { setClipboard(selected); pasteCount.current = 0; } },
+    paste: () => { if (clipboard) pasteFrom(clipboard); },
+    duplicate: () => { if (selected) { setClipboard(selected); pasteCount.current = 0; pasteFrom(selected); } },
+    remove: () => {
+      if (!selected) return;
+      const idx = instances.findIndex((i) => i.id === selected.id);
+      const rest = instances.filter((i) => i.id !== selected.id);
+      setInstances(() => rest, rest[Math.min(idx, rest.length - 1)]?.id ?? null);
+    },
+    add: () => {
+      const inst = fitInstance(makeInstance(), raw, region, fitMargin.v);
+      setInstances((list) => [...list, inst], inst.id);
+    },
+    nudge: (dx: number, dy: number) => { if (selected) setInstance({ ...selected, x: selected.x + dx, y: selected.y + dy }); },
+  };
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+
+  // desktop shortcuts: Ctrl/Cmd+C/V/D, Delete, arrows
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (tabRef.current !== 'design') return;
+      const a = actionsRef.current;
+      const mod = e.metaKey || e.ctrlKey;
+      const k = e.key.toLowerCase();
+      if (mod && k === 'c') { if (window.getSelection()?.toString()) return; a.copy(); e.preventDefault(); }
+      else if (mod && k === 'v') { a.paste(); e.preventDefault(); }
+      else if (mod && k === 'd') { a.duplicate(); e.preventDefault(); }
+      else if (!mod && (e.key === 'Delete' || e.key === 'Backspace')) { a.remove(); e.preventDefault(); }
+      else if (!mod && e.key.startsWith('Arrow')) {
+        const st = e.shiftKey ? 10 : 1;
+        const [dx, dy] = e.key === 'ArrowLeft' ? [-st, 0] : e.key === 'ArrowRight' ? [st, 0] : e.key === 'ArrowUp' ? [0, st] : [0, -st];
+        a.nudge(dx, dy);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // pointer interaction on the preview
+  const drag = useRef<{ hit: Hit; start: { x: number; y: number }; orig: Instance } | null>(null);
+  const onBoardPointer: BoardPointer = (type, pt, pxPerMm) => {
+    if (type === 'down') {
+      const hit = hitTest(instances, raw, pt, HIT_PX / pxPerMm, layout.selectedId, HANDLE_PX / pxPerMm);
+      if (!hit) { drag.current = null; select(null); return; }
+      const orig = instances.find((i) => i.id === hit.id)!;
+      drag.current = { hit, start: pt, orig };
+      if (hit.id !== layout.selectedId) select(hit.id);
+      return;
+    }
+    const d = drag.current;
+    if (!d) return;
+    if (type === 'move') setInstance(dragInstance(d.orig, raw, d.hit.part, d.start, pt, layout.lock));
+    else drag.current = null;
+  };
 
   // ---------------------------------------------------------------- calibration
   const [calib, setCalibRaw] = usePersisted<CalibSettings>('penplot.calib.v1', {
@@ -162,25 +269,29 @@ export default function App() {
   };
 
   // ---------------------------------------------------------------- job
+  const pathsD = useDeferredValue(sourcePaths);
+  const instancesD = useDeferredValue(instances);
   const job = useMemo(() => {
     if (tab === 'calibrate') {
       if (calib.mode === 'height') {
         const r = generateGcode(hTest.paths, profile, { title: 'Pen-height test', notes: hTest.notes, minZ: hTest.minZ, boundsMode: 'clip' });
-        return { kind: 'height' as const, result: r, ghost: hTest.paths.map((p) => p.pts), opt: null, file: 'penplot-pen-height-test.gcode' };
+        return { kind: 'height' as const, result: r, ghost: hTest.paths.map((p) => p.pts), opt: null, file: 'penplot-pen-height-test.gcode', perInstance: [] };
       }
       const t = offsetTest(profile, { squareSize: calib.squareSize, crossArm: calib.crossArm });
       const ordered = optimize(t.paths.map((p) => p.pts), { ...DEFAULT_OPTIMIZE, mergeTolerance: 0 }, penStart(profile)).paths;
       const r = generateGcode(ordered.map((pts) => ({ pts })), profile, { title: 'Offset test', notes: t.notes, boundsMode: 'clip' });
-      return { kind: 'offset' as const, result: r, ghost: t.paths.map((p) => p.pts), opt: null, file: 'penplot-offset-test.gcode' };
+      return { kind: 'offset' as const, result: r, ghost: t.paths.map((p) => p.pts), opt: null, file: 'penplot-offset-test.gcode', perInstance: [] };
     }
-    const placed = placeDesign(designD);
-    const o = optimize(placed, opt, penStart(profile));
-    const r = generateGcode(o.paths.map((pts): PlotPath => ({ pts })), profile, { title: designD.name, boundsMode });
-    const base = designD.name.replace(/\.[a-z0-9]+$/i, '').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'drawing';
-    return { kind: 'design' as const, result: r, ghost: placed, opt: o, file: `${base}-penplot.gcode` };
-  }, [tab, calib.mode, calib.squareSize, calib.crossArm, hTest, profile, designD, opt, boundsMode]);
+    const b = buildBoard(sourceName, pathsD, instancesD, profile, opt, { boundsMode });
+    return { kind: 'design' as const, result: b.result, ghost: b.placed.flat(), opt: b.opt, file: gcodeFileName(`${gcodeFileName(sourceName).replace(/\.gcode$/, '')}-penplot`), perInstance: b.bounds };
+  }, [tab, calib.mode, calib.squareSize, calib.crossArm, hTest, profile, sourceName, pathsD, instancesD, opt, boundsMode]);
 
-  const bounds = useMemo(() => checkBounds(job.ghost, profile), [job, profile]);
+  const badIndexes = job.perInstance.map((b, i) => (b.ok ? 0 : i + 1)).filter(Boolean);
+  const boundsMessage = badIndexes.length
+    ? `${badIndexes.length === 1 ? `Copy ${badIndexes[0]} is` : `Copies ${badIndexes.join(', ')} are`} partly outside the reachable area (${fmtArea(area)}). Those parts will be ${boundsMode === 'clip' ? 'clipped (not drawn)' : 'clamped to the edge'}.`
+    : null;
+  const badIds = useMemo(() => new Set(instancesD.filter((_, i) => job.perInstance[i] && !job.perInstance[i].ok).map((i) => i.id)), [instancesD, job]);
+  const boardOverlay: BoardOverlay | undefined = tab === 'calibrate' ? undefined : { instances, raw, selectedId: layout.selectedId, badIds, paper: paperBounds };
 
   const moves: PreviewMove[] = useMemo(() => {
     const parsed = parseGcode(job.result.gcode, { x: profile.homeX, y: profile.homeY });
@@ -216,20 +327,24 @@ export default function App() {
     return () => cancelAnimationFrame(raf.current);
   }, [playing, drawMoves]);
 
+  const [canShare] = useState(() => canShareGcode());
+  const [exportNote, setExportNote] = useState<string | null>(null);
   const download = () => {
-    const blob = new Blob([job.result.gcode], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = job.file;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    const name = downloadGcode(job.result.gcode, job.file);
+    setExportNote(`Saved as ${name}`);
   };
+  const share = async () => {
+    try {
+      const ok = await shareGcode(job.result.gcode, job.file);
+      if (ok) setExportNote(`Shared ${gcodeFileName(job.file)}`);
+    } catch {
+      setExportNote('Sharing failed — use Download instead.');
+    }
+  };
+  useEffect(() => setExportNote(null), [job.file]);
 
   const r = job.result;
-  const warnings = [...(job.kind === 'design' && bounds.message ? [bounds.message] : []), ...r.warnings.filter((w) => !/outside the reachable/.test(w) || job.kind !== 'design')];
+  const warnings = [...(job.kind === 'design' && boundsMessage ? [boundsMessage] : []), ...r.warnings.filter((w) => !/outside the reachable/.test(w) || job.kind !== 'design')];
   const lastMove = progress !== null && progress > 0 ? drawMoves[progress - 1] : null;
 
   return (
@@ -266,11 +381,13 @@ export default function App() {
               area={area}
               moves={drawMoves}
               progress={progress}
-              ghost={job.kind === 'design' && !bounds.ok ? job.ghost : undefined}
+              ghost={job.kind === 'design' && badIndexes.length ? job.ghost : undefined}
               squares={job.kind === 'height' ? hTest.squares : undefined}
               selectedSquare={picked}
               onSquareClick={pickSquare}
               showTravel={showTravel}
+              board={boardOverlay}
+              onBoardPointer={tab === 'calibrate' ? undefined : onBoardPointer}
             />
             <div className="scrub">
               <button type="button" className="play" onClick={() => setPlaying((p) => !p)} aria-label={playing ? 'Pause playback' : 'Play back the plot'}>
@@ -305,9 +422,20 @@ export default function App() {
               <div><b>{r.penLifts}</b><span>pen lifts</span></div>
             </div>
             {warnings.map((w) => <p key={w} className="warn">{w}</p>)}
-            <button type="button" className="btn gold big" onClick={download} disabled={!r.paths}>
-              ⬇ Download {job.file}
-            </button>
+            <div className={canShare ? 'export-btns two' : 'export-btns'}>
+              <button type="button" className="btn gold big" onClick={download} disabled={!r.paths}>
+                ⬇ Download {job.file}
+              </button>
+              {canShare && (
+                <button type="button" className="btn big share" onClick={share} disabled={!r.paths}>
+                  ⇪ Share / Save to Files
+                </button>
+              )}
+            </div>
+            {exportNote && <p className="note tiny ok-note">{exportNote}</p>}
+            <p className="note tiny hint">
+              Phone tip: the file must end in <b>.gcode</b>. If your phone still adds <b>.txt</b>, rename it in the Files app (long-press → Rename) before copying it to the SD card{canShare ? ', or use Share → Save to Files' : ''}.
+            </p>
             <p className="note tiny">
               Pen-down Z {fmt(job.kind === 'height' ? r.minZ : profile.penDownZ)}{job.kind === 'height' ? ' (lowest square)' : ''} · pen-up Z {fmt(profile.penUpZ)} · safe Z {fmt(profile.safeZ)} · offset X {fmt(profile.penOffsetX)} Y {fmt(profile.penOffsetY)}. No heat, no extrusion.
             </p>
@@ -341,22 +469,49 @@ export default function App() {
                 onImageFile={onImageFile}
                 text={text}
                 setText={setText}
-                placement={placement}
-                setPlacement={setPlacement}
-                size={{ w: size.w, h: size.h }}
-                fitMargin={fitMargin.v}
-                setFitMargin={(v) => setFitMargin({ v })}
-                onFit={() => {
-                  const f = fitDesign(design, area, fitMargin.v);
-                  setPlacement({ x: f.x, y: f.y, scale: f.scale });
-                }}
-                onCenter={() => setPlacement({ x: (area.minX + area.maxX) / 2, y: (area.minY + area.maxY) / 2 })}
+                boardSection={
+                  <BoardPanel
+                    instances={instances}
+                    selected={selected}
+                    select={select}
+                    raw={raw}
+                    setSelected={setInstance}
+                    resize={(change) => selected && setInstance(resizeInstance(selected, raw, change, layout.lock))}
+                    lock={layout.lock}
+                    setLock={(lock) => setLayout((l) => ({ ...l, lock }))}
+                    onCopy={actions.copy}
+                    onPaste={actions.paste}
+                    onDuplicate={actions.duplicate}
+                    onDelete={actions.remove}
+                    onAdd={actions.add}
+                    canPaste={!!clipboard}
+                    fitMargin={fitMargin.v}
+                    setFitMargin={(v) => setFitMargin({ v })}
+                    onFit={() => selected && setInstance(fitInstance(selected, raw, region, fitMargin.v))}
+                    onCenter={() => selected && setInstance({ ...selected, x: (region.minX + region.maxX) / 2, y: (region.minY + region.maxY) / 2 })}
+                    grid={grid}
+                    setGrid={setGrid}
+                    onMakeGrid={() => {
+                      const template = selected ?? instances[0] ?? makeInstance();
+                      const list = gridLayout(template, raw, { ...grid, margin: fitMargin.v }, region);
+                      setInstances(() => list, list[0]?.id ?? null);
+                    }}
+                    paper={paper}
+                    setPaper={setPaper}
+                    onCenterPaper={() => {
+                      const ps = paperSize(paper);
+                      if (ps) setPaper({ originX: Math.round(((profile.bedW - ps.w) / 2) * 10) / 10, originY: Math.round(((profile.bedH - ps.h) / 2) * 10) / 10 });
+                    }}
+                    regionLabel={fmtArea(region)}
+                    boundsMode={boundsMode}
+                    setBoundsMode={setBoundsMode}
+                    boundsMessage={boundsMessage}
+                    badIndexes={badIndexes}
+                  />
+                }
                 opt={opt}
                 setOpt={setOpt}
                 stats={job.opt ?? { pathsBefore: 0, pathsAfter: 0, travelBefore: 0, travelAfter: 0 }}
-                boundsMode={boundsMode}
-                setBoundsMode={setBoundsMode}
-                boundsMessage={bounds.message}
               />
             )}
             {tab === 'calibrate' && (
