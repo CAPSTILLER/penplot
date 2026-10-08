@@ -21,7 +21,7 @@ export const CUBE_ZERO_MM = 50;
 export const CUBE_ZERO_SPACING = 18.8;
 export const CUBE_SPOTS = 7;
 
-export type StepAction = 'up' | 'down' | 'left' | 'right' | 'cw' | 'ccw' | 'dwell' | 'circle';
+export type StepAction = 'up' | 'down' | 'left' | 'right' | 'cw' | 'ccw' | 'dwell' | 'circle' | 'spiral';
 export interface Step {
   id: string;
   action: StepAction;
@@ -30,6 +30,12 @@ export interface Step {
   /** seconds per repeat (before the time multiplier) */
   duration: number;
   repeat: number;
+  /** spot traces rings of this diameter (mm) during the step (moves / rotations / dwell); 0 = off */
+  ring?: number;
+  /** seconds per ring revolution (default 3) */
+  ringRev?: number;
+  /** spiral turns (spiral action, default 3) */
+  turns?: number;
 }
 export type OpticKind = 'none' | 'prism' | 'cube';
 export interface Optics {
@@ -64,6 +70,7 @@ export const ACTIONS: { value: StepAction; label: string; unit: string }[] = [
   { value: 'ccw', label: 'Rotate CCW', unit: '°' },
   { value: 'dwell', label: 'Dwell', unit: '' },
   { value: 'circle', label: 'Circle (dia)', unit: 'mm' },
+  { value: 'spiral', label: 'Spiral (dia)', unit: 'mm' },
 ];
 
 let idn = 0;
@@ -140,7 +147,7 @@ export function sampleRun(run: RunSpec, maxStepMm = 0.08): Samples {
   const gR = Math.max(0, run.circleDia) / 2;
   const rev = Math.max(0.05, run.circleRev || 1);
   // expand steps into segments
-  const segs: { from: Pose; to: Pose; dur: number; t0: number; stepCircle: number; step: number }[] = [];
+  const segs: { from: Pose; to: Pose; dur: number; t0: number; stepCircle: number; step: number; ringR?: number; ringRev?: number; spiralR?: number; turns?: number }[] = [];
   let pose: Pose = { tx: 0, ty: 0, rot: 0 };
   let t = 0;
   const hd = Math.max(0, run.homeDwell ?? 0) * mult;
@@ -157,16 +164,22 @@ export function sampleRun(run: RunSpec, maxStepMm = 0.08): Samples {
       else if (s.action === 'cw') to.rot += a;
       else if (s.action === 'ccw') to.rot -= a;
       const dur = Math.max(0, s.duration) * mult;
-      segs.push({ from: pose, to, dur, t0: t, stepCircle: s.action === 'circle' ? Math.max(0, a) / 2 : 0, step: si });
+      segs.push({
+        from: pose, to, dur, t0: t, stepCircle: s.action === 'circle' ? Math.max(0, a) / 2 : 0, step: si,
+        ringR: s.action !== 'circle' && s.action !== 'spiral' ? Math.max(0, s.ring ?? 0) / 2 : 0, ringRev: Math.max(0.2, s.ringRev ?? 3),
+        spiralR: s.action === 'spiral' ? Math.max(0, a) / 2 : 0, turns: Math.max(0.5, s.turns ?? 3),
+      });
       pose = to;
       t += dur;
     }
   });
   const counts = segs.map((g) => {
     if (g.dur <= 0) return 0;
-    const lever = maxSpotR + gR + g.stepCircle + Math.max(Math.hypot(g.from.tx, g.from.ty), Math.hypot(g.to.tx, g.to.ty));
+    const extra = (g.ringR ?? 0) + (g.spiralR ?? 0);
+    const lever = maxSpotR + gR + g.stepCircle + extra + Math.max(Math.hypot(g.from.tx, g.from.ty), Math.hypot(g.to.tx, g.to.ty));
     const L = Math.hypot(g.to.tx - g.from.tx, g.to.ty - g.from.ty) + (Math.abs(g.to.rot - g.from.rot) * Math.PI / 180) * lever
-      + (gR > 0 ? (2 * Math.PI * gR * g.dur) / rev : 0) + 2 * Math.PI * g.stepCircle;
+      + (gR > 0 ? (2 * Math.PI * gR * g.dur) / rev : 0) + 2 * Math.PI * g.stepCircle
+      + (g.ringR ? (2 * Math.PI * g.ringR * g.dur) / (g.ringRev ?? 3) : 0) + (g.spiralR ? Math.PI * g.spiralR * (g.turns ?? 3) : 0);
     return Math.max(1, Math.ceil(L / maxStepMm));
   });
   let n = counts.reduce((a, b) => a + b, 0);
@@ -193,6 +206,8 @@ export function sampleRun(run: RunSpec, maxStepMm = 0.08): Samples {
       let bx = 0, by = 0;
       if (gR > 0) { const ph = (2 * Math.PI * time) / rev; bx += gR * Math.cos(ph); by += gR * Math.sin(ph); }
       if (g.stepCircle > 0) { const ph = 2 * Math.PI * u; bx += g.stepCircle * Math.cos(ph); by += g.stepCircle * Math.sin(ph); }
+      if (g.ringR) { const ph = (2 * Math.PI * (u * g.dur)) / (g.ringRev ?? 3); bx += g.ringR * Math.cos(ph); by += g.ringR * Math.sin(ph); }
+      if (g.spiralR) { const ph = 2 * Math.PI * (g.turns ?? 3) * u; bx += g.spiralR * u * Math.cos(ph); by += g.spiralR * u * Math.sin(ph); }
       out.tEnd[k] = g.t0 + ((j + 1) / c) * g.dur;
       out.dt[k] = g.dur / c;
       out.tx[k] = tx; out.ty[k] = ty; out.rot[k] = rot; out.bx[k] = bx; out.by[k] = by; out.step[k] = g.step;

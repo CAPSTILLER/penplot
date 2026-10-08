@@ -14,7 +14,7 @@ import { parseGcode } from '../lib/gcodeParse';
 import { nozzleToPen, reachableArea } from '../lib/machine';
 import { penStart } from '../lib/pipeline';
 import type { Profile } from '../lib/profile';
-import { type WalletKey, DRIFT_EVERY, SNAP_DWELL_S, parseAddress, walletSequence } from '../lib/wallet';
+import { type KeyVersion, type WalletKey, DRIFT_EVERY, SNAP_DWELL_S, V2_DOT_S, parseAddress, ringRevFor, walletSequence } from '../lib/wallet';
 
 function usePersist<T>(key: string, initial: T) {
   const [v, setV] = useState<T>(() => {
@@ -137,7 +137,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
   const [saved, setSaved] = usePersist<{ seqs: Record<string, Step[]> }>('penplot.slab.seqs.v1', { seqs: {} });
   const [gc, setGcRaw] = usePersist<GcOpts>('penplot.slab.gcode.v1', { ...DEFAULT_TRACE, scale: 1, outline: true, dx: 0, dy: 0 });
   const [cmp, setCmpRaw] = usePersist<Compare>('penplot.slab.compare.v1', { on: false, otherId: 'slab-default-1', otherFace: 'front' });
-  const [wallet, setWallet] = usePersist<{ addr: string; key: WalletKey }>('penplot.slab.wallet.v1', { addr: '0x1a72f7314297B0b8f6808A9248969A8108F49890', key: 'raw' });
+  const [wallet, setWallet] = usePersist<{ addr: string; key: WalletKey; version: KeyVersion }>('penplot.slab.wallet.v1', { addr: '0x1a72f7314297B0b8f6808A9248969A8108F49890', key: 'raw', version: 'v2' });
   const [pendingRun, setPendingRun] = useState(false);
   const setCfg = (p: Partial<Cfg>) => setCfgRaw((o) => ({ ...o, ...p }));
   const setOptics = (p: Partial<Optics>) => setCfgRaw((o) => ({ ...o, optics: { ...o.optics, ...p } }));
@@ -377,12 +377,12 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
 
   // ---- wallet sequence
   const parsedAddr = useMemo(() => parseAddress(wallet.addr), [wallet.addr]);
-  const walletSeq = useMemo(() => (parsedAddr.ok ? walletSequence(parsedAddr.checksum, wallet.key) : null), [parsedAddr, wallet.key]);
+  const walletSeq = useMemo(() => (parsedAddr.ok ? walletSequence(parsedAddr.checksum, wallet.key, wallet.version) : null), [parsedAddr, wallet.key, wallet.version]);
   const generate = (andRun: boolean) => {
     if (!walletSeq || running) return;
     const steps = walletSeq.steps.map((x) => ({ ...x, id: stepId() }));
     setSeq({ steps });
-    setCfg({ seqName: walletSeq.name, optics: walletSeq.optics });
+    setCfg({ seqName: walletSeq.name, optics: walletSeq.optics, circleDia: 0 });
     setSaved((o) => ({ seqs: { ...o.seqs, [walletSeq.name]: steps } }));
     if (andRun) setPendingRun(true);
   };
@@ -573,13 +573,14 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                 <p className="note wallet-ok">✓ <code>{parsedAddr.checksum}</code>{parsedAddr.fixedCase ? ' (checksum casing applied)' : ' (checksum OK)'}</p>
               ) : <p className="warn">{parsedAddr.error}</p>}
               <Segmented label="Key" value={wallet.key} onChange={(key) => setWallet((o) => ({ ...o, key }))} options={[{ value: 'raw', label: 'Raw key' }, { value: 'hashed', label: 'Hashed key' }]} />
+              <Segmented label="Key version" value={wallet.version} onChange={(version) => setWallet((o) => ({ ...o, version }))} options={[{ value: 'v2', label: 'v2 · circles' }, { value: 'v1', label: 'v1 · lines' }]} />
               <div className="grid2">
                 <button type="button" className="btn" onClick={() => generate(false)} disabled={!walletSeq || running}>Generate</button>
                 <button type="button" className="btn gold" onClick={() => generate(true)} disabled={!walletSeq || running}>Generate &amp; run</button>
               </div>
               {walletSeq && (
                 <details className="wallet-decoded">
-                  <summary>{walletSeq.name} · {walletSeq.opticText} · {walletSeq.steps.length} steps</summary>
+                  <summary>{walletSeq.name} · {walletSeq.opticText} · {walletSeq.steps.length} steps · {fmtDuration(runDuration({ ...run, steps: walletSeq.steps, multiplier: 1, homeDwell: 0 }))}</summary>
                   <p className="note">Source: <code>{walletSeq.source}</code></p>
                   <ol className="decoded" start={1}>
                     <li><b>{walletSeq.source.slice(0, 2)}</b> → {walletSeq.opticText}</li>
@@ -588,7 +589,18 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                 </details>
               )}
               <details className="wallet-key">
-                <summary>Key — how an address becomes a sequence</summary>
+                <summary>Key — how an address becomes a sequence ({wallet.version})</summary>
+                {wallet.version === 'v2' ? (
+                <ul className="steps">
+                  <li><b>Raw</b> uses the 40 checksummed address characters; <b>Hashed</b> uses keccak-256 of the 20 address bytes (first 40 hex chars, checksum-cased). The <b>first 2 chars</b> pick the optic, same as v1.</li>
+                  <li>The other 38 chars are read as <b>19 pairs</b>. First char's top 2 bits = action: <b>0 ring move</b> (the slab slides while the spot traces rings), <b>1 arc</b> (rotation about the slab centre, with rings if the 2nd char is a capital), <b>2 circle</b> (repeated 1–4×), <b>3 spiral</b> (outward, 3 turns; 5 if 2nd char is a capital).</li>
+                  <li><b>Sizes</b> come from the 2nd char (0–15): moves 2–36 mm, arcs 5–150°, circles and spirals ⌀1–20 mm. Ring size is ⌀1–20 mm, from the low 2 bits of both chars. The spot runs round rings at about 3 mm/s and the slab advances half a ring per turn, so the rings interlock.</li>
+                  <li><b>Direction:</b> capital 1st char = up/right/CW, small = down/left/CCW; for moves, a capital 2nd char = up/down, small = left/right. Digits: positive when digit + position is even.</li>
+                  <li><b>Timing:</b> ring moves ≈0.5 mm/s, arcs 2.5°/s, and circles and spirals trace at about 3 mm/s (bright enough to plot). Every second pair ends with a {V2_DOT_S} s dwell (a dot).</li>
+                  <li><b>Stays on the slab:</b> a move or arc that would push the spot (plus its ring) out of the safe box flips direction, then shortens to ¾, ½, ¼; circles and spirals shrink to fit.</li>
+                  <li>Same address + key + version = the same sequence every time.</li>
+                </ul>
+                ) : (
                 <ul className="steps">
                   <li><b>Raw</b> uses the 40 address characters with checksum casing. <b>Hashed</b> uses keccak-256 of the 20 address bytes (first 40 of 64 hex chars), cased with the same checksum rule applied to the hash.</li>
                   <li>The <b>first 2 chars</b> (one byte) pick the optic: byte mod 3 → none / prism / cube. High nibble → optic distance 0 to −20 mm; bits 1–3 → prism angle 5–26°.</li>
@@ -598,6 +610,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                   <li><b>Stays on the slab:</b> if a move would take the centre spot past the safe box (±45 mm sideways, tighter with the cube; ±20 mm up/down; rotation ±35°, tighter with the cube), that move flips direction. Every {DRIFT_EVERY} steps the slab also drifts 25% of the way back to centre.</li>
                   <li>Same address + same key = the same sequence, every time. Generated sequences are saved by name and can be edited like any other.</li>
                 </ul>
+                )}
               </details>
             </Section>
 
@@ -626,6 +639,10 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                       {s.action !== 'dwell' ? <Num label="Amount" value={s.amount} onChange={(amount) => patchStep(s.id, { amount })} step={1} min={0} unit={unitOf(s.action)} /> : <span className="field"><span className="field-label">Amount</span><span className="step-na">—</span></span>}
                       <Num label="Time" value={s.duration} onChange={(duration) => patchStep(s.id, { duration })} step={1} min={0} unit="s" />
                       <Num label="Repeat" value={s.repeat} onChange={(repeat) => patchStep(s.id, { repeat: Math.round(repeat) })} step={1} min={1} max={10000} decimals={0} unit="×" />
+                      {s.action === 'spiral'
+                        ? <Num label="Turns" value={s.turns ?? 3} onChange={(turns) => patchStep(s.id, { turns })} step={1} min={0.5} max={50} />
+                        : s.action === 'circle' ? <span className="field" />
+                        : <Num label="Rings" value={s.ring ?? 0} onChange={(ring) => patchStep(s.id, { ring, ringRev: ringRevFor(ring) })} step={1} min={0} max={30} unit="⌀" />}
                     </div>
                   </li>
                 ))}

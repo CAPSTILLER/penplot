@@ -266,9 +266,9 @@ footer p { margin: 4px 0; }
 .step-top .select { min-height: 38px; padding: 6px 8px; }
 .step-n { font: 900 0.9rem var(--mono); color: var(--gold); min-width: 2ch; text-align: center; }
 .btn.ico { min-width: 38px; min-height: 38px; padding: 4px; flex: none; }
-.step-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.step-grid .num { padding-right: 30px; min-height: 38px; padding-top: 6px; padding-bottom: 6px; font-size: 0.9rem; }
-.step-grid .unit { right: 7px; }
+.step-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.step-grid .num { padding-left: 7px; padding-right: 24px; min-height: 38px; padding-top: 6px; padding-bottom: 6px; font-size: 0.9rem; }
+.step-grid .unit { right: 5px; }
 .step-na { min-height: 38px; display: flex; align-items: center; color: var(--muted); padding-left: 10px; }
 .slab-bed { margin: 0 -6px; }
 @media (max-width: 480px) { .tabs .seg-btn { padding: 8px 3px; font-size: 0.72rem; letter-spacing: 0.03em; } }

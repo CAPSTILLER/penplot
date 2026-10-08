@@ -20,21 +20,23 @@ describe('wallet sequence', () => {
 
   it('is deterministic and case-insensitive on input', () => {
     for (const key of ['raw', 'hashed'] as const) {
-      const a = walletSequence(CAP, key), b = walletSequence(CAP.toLowerCase(), key);
+      for (const v of ['v1', 'v2'] as const) {
+      const a = walletSequence(CAP, key, v), b = walletSequence(CAP.toLowerCase(), key, v);
       const strip = (w: typeof a) => JSON.stringify({ ...w, steps: w.steps.map(({ id: _, ...s }) => s) });
       expect(strip(a)).toBe(strip(b));
-      expect(a.decoded.length).toBe(38);
+      expect(a.decoded.length).toBe(v === 'v1' ? 38 : 19);
       expect(a.source.length).toBe(40);
-    }
+    } }
     expect(sourceChars(CAP, 'raw')).toBe(CAP.slice(2));
     expect(sourceChars(CAP, 'hashed')).not.toBe(sourceChars(CAP, 'raw'));
-    expect(walletSequence(CAP, 'raw').name).toBe('Wallet 0x1a72…9890 (raw)');
+    expect(walletSequence(CAP, 'raw', 'v1').name).toBe('Wallet 0x1a72…9890 (raw v1)');
+    expect(walletSequence(CAP, 'raw').name).toBe('Wallet 0x1a72…9890 (raw v2)');
   });
 
   it('keeps the centre spot inside the safe bounds', () => {
     for (const addr of [CAP, LEDGER, '0x0000000000000000000000000000000000000000', '0xffffffffffffffffffffffffffffffffffffffff'])
       for (const key of ['raw', 'hashed'] as const) {
-        const w = walletSequence(addr, key);
+        const w = walletSequence(addr, key, 'v1');
         const b = walletBounds(w.optics);
         const s = sampleRun({ name: '', steps: w.steps, optics: { kind: 'none', distance: 0, prismAngle: 0 }, multiplier: 1, circleDia: 0, circleRev: 4, spotDia: 1.75 });
         for (let k = 0; k < s.n; k++) {
@@ -43,5 +45,30 @@ describe('wallet sequence', () => {
           expect(Math.abs(s.rot[k])).toBeLessThanOrEqual(b.rot + 30.01);
         }
       }
+  });
+});
+
+describe('wallet key v2 (circle-heavy)', () => {
+  it('uses rings, circles, arcs and spirals with sizes from small to large, and stays on the face', () => {
+    let dias: number[] = [];
+    let kinds = new Set<string>();
+    for (const addr of [CAP, LEDGER, '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'])
+      for (const key of ['raw', 'hashed'] as const) {
+        const w = walletSequence(addr, key, 'v2');
+        for (const st of w.steps) {
+          if (st.ring) { dias.push(st.ring); kinds.add('ring'); }
+          if (st.action === 'circle' || st.action === 'spiral') { dias.push(st.amount); kinds.add(st.action); }
+          if (st.action === 'cw' || st.action === 'ccw') kinds.add('arc');
+        }
+        const b = walletBounds(w.optics);
+        const s = sampleRun({ name: '', steps: w.steps, optics: { kind: 'none', distance: 0, prismAngle: 0 }, multiplier: 1, circleDia: 0, circleRev: 4, spotDia: 1.75 });
+        for (let k = 0; k < s.n; k++) {
+          expect(Math.abs(s.xs[k])).toBeLessThanOrEqual(b.x + 1.5);
+          expect(Math.abs(s.ys[k])).toBeLessThanOrEqual(b.y + 1.5);
+        }
+      }
+    expect([...kinds].sort()).toEqual(['arc', 'circle', 'ring', 'spiral']);
+    expect(Math.min(...dias)).toBeLessThanOrEqual(3);
+    expect(Math.max(...dias)).toBeGreaterThanOrEqual(14);
   });
 });
