@@ -64,6 +64,7 @@ A separate **Slab Sim** tab simulates the Layer-Zero setup. A fixed base-blue la
   - An optional "circle while moving" makes the spot trace a circle during the whole run.
   - **Home dwell** keeps the laser on at the start position before step 1, which burns the start dots.
   - The **Cap Sequence 1** preset is built in, and you can save your own sequences by name.
+- **Wallet sequence**: paste an EVM address (it's validated, and EIP-55 checksum casing is applied with keccak-256) and pick the **Raw** or **Hashed** key. **Generate** fills the step list deterministically: the first byte picks the optic, and each of the other 38 characters becomes a step (2 bits of action, 2 bits of size, letter case for direction). Even steps move steadily; odd steps snap and then dwell to make dots. A move flips direction if it would leave the safe box, and every 10 steps the slab drifts back toward the centre. The full key is explained in the panel.
 - **Output**:
   - A live animation of the slab moving under the beam.
   - **PNG** export of the face, straight on, on a plain grey background.

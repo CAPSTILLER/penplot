@@ -272,3 +272,9 @@ footer p { margin: 4px 0; }
 .step-na { min-height: 38px; display: flex; align-items: center; color: var(--muted); padding-left: 10px; }
 .slab-bed { margin: 0 -6px; }
 @media (max-width: 480px) { .tabs .seg-btn { padding: 8px 3px; font-size: 0.72rem; letter-spacing: 0.03em; } }
+.wallet-in { font: 700 0.74rem var(--mono); letter-spacing: -0.02em; padding-left: 8px; padding-right: 8px; }
+.wallet-ok { font-size: 0.72rem; word-break: break-all; }
+.wallet-decoded summary, .wallet-key summary { cursor: pointer; font-weight: 800; font-size: 0.8rem; color: var(--gold); padding: 4px 0; }
+.wallet-decoded .note code { word-break: break-all; }
+.decoded { margin: 6px 0 0; padding-left: 26px; font: 600 0.72rem/1.5 var(--mono); color: #cfcfcf; max-height: 320px; overflow: auto; }
+.decoded b { color: var(--gold); }

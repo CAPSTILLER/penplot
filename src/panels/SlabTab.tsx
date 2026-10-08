@@ -14,6 +14,7 @@ import { parseGcode } from '../lib/gcodeParse';
 import { nozzleToPen, reachableArea } from '../lib/machine';
 import { penStart } from '../lib/pipeline';
 import type { Profile } from '../lib/profile';
+import { type WalletKey, DRIFT_EVERY, SNAP_DWELL_S, parseAddress, walletSequence } from '../lib/wallet';
 
 function usePersist<T>(key: string, initial: T) {
   const [v, setV] = useState<T>(() => {
@@ -136,6 +137,8 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
   const [saved, setSaved] = usePersist<{ seqs: Record<string, Step[]> }>('penplot.slab.seqs.v1', { seqs: {} });
   const [gc, setGcRaw] = usePersist<GcOpts>('penplot.slab.gcode.v1', { ...DEFAULT_TRACE, scale: 1, outline: true, dx: 0, dy: 0 });
   const [cmp, setCmpRaw] = usePersist<Compare>('penplot.slab.compare.v1', { on: false, otherId: 'slab-default-1', otherFace: 'front' });
+  const [wallet, setWallet] = usePersist<{ addr: string; key: WalletKey }>('penplot.slab.wallet.v1', { addr: '0x1a72f7314297B0b8f6808A9248969A8108F49890', key: 'raw' });
+  const [pendingRun, setPendingRun] = useState(false);
   const setCfg = (p: Partial<Cfg>) => setCfgRaw((o) => ({ ...o, ...p }));
   const setOptics = (p: Partial<Optics>) => setCfgRaw((o) => ({ ...o, optics: { ...o.optics, ...p } }));
   const setGc = (p: Partial<GcOpts>) => setGcRaw((o) => ({ ...o, ...p }));
@@ -372,6 +375,19 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
     setSaved((o) => { const n = { ...o.seqs }; delete n[cfg.seqName]; return { seqs: n }; });
   };
 
+  // ---- wallet sequence
+  const parsedAddr = useMemo(() => parseAddress(wallet.addr), [wallet.addr]);
+  const walletSeq = useMemo(() => (parsedAddr.ok ? walletSequence(parsedAddr.checksum, wallet.key) : null), [parsedAddr, wallet.key]);
+  const generate = (andRun: boolean) => {
+    if (!walletSeq || running) return;
+    const steps = walletSeq.steps.map((x) => ({ ...x, id: stepId() }));
+    setSeq({ steps });
+    setCfg({ seqName: walletSeq.name, optics: walletSeq.optics });
+    setSaved((o) => ({ seqs: { ...o.seqs, [walletSeq.name]: steps } }));
+    if (andRun) setPendingRun(true);
+  };
+  useEffect(() => { if (pendingRun) { setPendingRun(false); start(false); } }, [pendingRun, seq.steps]);
+
   // ---- PNG export
   const [note, setNote] = useState<string | null>(null);
   const [gcNote, setGcNote] = useState<string | null>(null);
@@ -546,6 +562,43 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                 <Num label="Spot size" value={cfg.spotDia} onChange={(spotDia) => setCfg({ spotDia })} min={0.5} max={4} step={0.25} unit="mm" />
                 <Num label="Home dwell" value={cfg.homeDwell} onChange={(homeDwell) => setCfg({ homeDwell })} min={0} max={600} step={5} unit="s" hint="Laser on at home before step 1" />
               </div>
+            </Section>
+
+            <Section title="Wallet sequence" right={walletSeq ? <span className="pill">{walletSeq.decoded.length} keys</span> : undefined}>
+              <label className="field"><span className="field-label">EVM wallet address</span>
+                <input className="num txt wallet-in" type="text" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={wallet.addr}
+                  onChange={(e) => setWallet((o) => ({ ...o, addr: e.target.value }))} placeholder="0x…" aria-label="Wallet address" />
+              </label>
+              {parsedAddr.ok ? (
+                <p className="note wallet-ok">✓ <code>{parsedAddr.checksum}</code>{parsedAddr.fixedCase ? ' (checksum casing applied)' : ' (checksum OK)'}</p>
+              ) : <p className="warn">{parsedAddr.error}</p>}
+              <Segmented label="Key" value={wallet.key} onChange={(key) => setWallet((o) => ({ ...o, key }))} options={[{ value: 'raw', label: 'Raw key' }, { value: 'hashed', label: 'Hashed key' }]} />
+              <div className="grid2">
+                <button type="button" className="btn" onClick={() => generate(false)} disabled={!walletSeq || running}>Generate</button>
+                <button type="button" className="btn gold" onClick={() => generate(true)} disabled={!walletSeq || running}>Generate &amp; run</button>
+              </div>
+              {walletSeq && (
+                <details className="wallet-decoded">
+                  <summary>{walletSeq.name} · {walletSeq.opticText} · {walletSeq.steps.length} steps</summary>
+                  <p className="note">Source: <code>{walletSeq.source}</code></p>
+                  <ol className="decoded" start={1}>
+                    <li><b>{walletSeq.source.slice(0, 2)}</b> → {walletSeq.opticText}</li>
+                    {walletSeq.decoded.map((d) => <li key={d.pos}><b>{d.ch}</b> → {d.text}</li>)}
+                  </ol>
+                </details>
+              )}
+              <details className="wallet-key">
+                <summary>Key — how an address becomes a sequence</summary>
+                <ul className="steps">
+                  <li><b>Raw</b> uses the 40 address characters with checksum casing. <b>Hashed</b> uses keccak-256 of the 20 address bytes (first 40 of 64 hex chars), cased with the same checksum rule applied to the hash.</li>
+                  <li>The <b>first 2 chars</b> (one byte) pick the optic: byte mod 3 → none / prism / cube. High nibble → optic distance 0 to −20 mm; bits 1–3 → prism angle 5–26°.</li>
+                  <li>The other <b>38 chars are 38 steps</b>, in order. Each char is a number 0–15: top 2 bits = action (0 move up/down, 1 move left/right, 2 rotate, 3 circle/dwell), low 2 bits = size: moves 1/2/3/5 mm, rotations 5/10/15/30°, circles ⌀1/2/3/5 mm (dwells 2/3/4/6 s).</li>
+                  <li><b>Direction:</b> capital letter = up / right / CW / circle; small letter = down / left / CCW / dwell. Digits have no case: positive when digit + position is even.</li>
+                  <li><b>Timing:</b> even steps move steadily (1 mm per s, 5° per 2 s, circle in 4 s). Odd steps snap in 1 s and then dwell {SNAP_DWELL_S} s, which burns a dot.</li>
+                  <li><b>Stays on the slab:</b> if a move would take the centre spot past the safe box (±45 mm sideways, tighter with the cube; ±20 mm up/down; rotation ±35°, tighter with the cube), that move flips direction. Every {DRIFT_EVERY} steps the slab also drifts 25% of the way back to centre.</li>
+                  <li>Same address + same key = the same sequence, every time. Generated sequences are saved by name and can be edited like any other.</li>
+                </ul>
+              </details>
             </Section>
 
             <Section title="Motion sequence" right={<span className="pill">{fmtDuration(dur)}</span>}>
