@@ -48,6 +48,28 @@ Everything runs in the browser. There's no server, no API keys, and no uploads. 
   - The download is an `application/octet-stream` Blob named `<name>.gcode`, never `.txt`, so phones don't treat it as a text file.
   - Where the Web Share API can share files (iPhone Safari, Android Chrome), a **Share / Save to Files** button shares a real `*.gcode` File.
 
+## Slab Simulator tab
+
+A separate **Slab Sim** tab simulates the Layer-Zero setup. A fixed base-blue laser points straight down through an optic onto a 150 × 68 × 6 mm stone slab, and the slab moves underneath it.
+
+- **Slabs**: named slabs (Test A, Test B, Blank 1, plus new blanks), each with a front and a back face. A face keeps its marks until you clear it. The run list is saved in `localStorage` and replayed when the page loads.
+- **Marks**: exposure builds up on a 10 px/mm grid. About 1 s leaves a pale, shallow mark and about 125 s leaves a full bright dot. Tap the slab to read the exposure, pass count and approximate depth at any point.
+- **Optics**:
+  - **None**: one spot at the slab centre.
+  - **Prism**: one spot, deflected by the bend angle.
+  - **Diffraction cube**: 7 spots in a row, 18.8 mm apart at zero (50 mm above the slab). Spacing scales with distance, so 10 mm closer gives about 15 mm.
+- **Sequencer**:
+  - Steps are move up/down/left/right (mm), rotate CW/CCW (°, about the slab centre), dwell, or circle. Each step has an amount, a time and a repeat count.
+  - A time multiplier applies to the whole run (2× means every step takes twice as long).
+  - An optional "circle while moving" makes the spot trace a circle during the whole run.
+  - **Home dwell** keeps the laser on at the start position before step 1, which burns the start dots.
+  - The **Cap Sequence 1** preset is built in, and you can save your own sequences by name.
+- **Output**:
+  - A live animation of the slab moving under the beam.
+  - **PNG** export of the face, straight on, on a plain grey background.
+  - A side-by-side **compare** view.
+  - **Pen-plot G-code**: spot trails become pen strokes. Passes below a minimum exposure are skipped, long dwells become small dots and retraced lines are drawn only once. The face is centred on the bed with an optional slab outline. The file goes through the same generator, Printer profile, preview, Download and Share as the other tabs.
+
 ## Develop
 
 ```bash

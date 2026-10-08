@@ -6,6 +6,7 @@ import { DesignPanel, type ImageSettings, type SourceKind, type TextSettings } f
 import { BoardPanel } from './panels/BoardPanel';
 import { CalibratePanel, type CalibSettings } from './panels/CalibratePanel';
 import { PrinterPanel } from './panels/PrinterPanel';
+import { SlabTab } from './panels/SlabTab';
 import { designCenter, flipY } from './lib/design';
 import {
   type GridOptions, type Hit, type Instance, type PaperSettings, dragInstance, fitInstance, gridLayout, hitTest, intersect,
@@ -25,7 +26,7 @@ import { heightTest, offsetTest } from './lib/calibration';
 import { type Profile, type ProfileStore, loadProfiles, normalizeProfile, saveProfiles } from './lib/profile';
 import { buildBoard, penStart } from './lib/pipeline';
 
-type Tab = 'design' | 'calibrate' | 'printer';
+type Tab = 'design' | 'calibrate' | 'printer' | 'slab';
 
 /** Traced images start with their long side at this many mm (before placement scaling). */
 const IMAGE_MM = 100;
@@ -347,6 +348,17 @@ export default function App() {
   const warnings = [...(job.kind === 'design' && boundsMessage ? [boundsMessage] : []), ...r.warnings.filter((w) => !/outside the reachable/.test(w) || job.kind !== 'design')];
   const lastMove = progress !== null && progress > 0 ? drawMoves[progress - 1] : null;
 
+  const nav = (
+    <nav className="tabs" aria-label="Sections">
+      <Segmented
+        label="Section"
+        value={tab}
+        onChange={setTab}
+        options={[{ value: 'design', label: 'Design' }, { value: 'calibrate', label: 'Calibrate' }, { value: 'printer', label: 'Printer' }, { value: 'slab', label: 'Slab Sim' }]}
+      />
+    </nav>
+  );
+
   return (
     <div className="app">
       <header className="top">
@@ -367,6 +379,7 @@ export default function App() {
         </div>
       )}
 
+      {tab === 'slab' ? <SlabTab profile={profile} nav={nav} /> : (
       <div className="layout">
         <div className="col-preview">
           <div className="panel preview">
@@ -443,14 +456,7 @@ export default function App() {
         </div>
 
         <div className="col-controls">
-          <nav className="tabs" aria-label="Sections">
-            <Segmented
-              label="Section"
-              value={tab}
-              onChange={setTab}
-              options={[{ value: 'design', label: 'Design' }, { value: 'calibrate', label: 'Calibrate' }, { value: 'printer', label: 'Printer' }]}
-            />
-          </nav>
+          {nav}
           <div className="panel controls">
             {tab === 'design' && (
               <DesignPanel
@@ -550,6 +556,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      )}
 
       <footer>
         <p>

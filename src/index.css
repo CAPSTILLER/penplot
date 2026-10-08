@@ -245,3 +245,30 @@ footer p { margin: 4px 0; }
 .note.hint { color: var(--muted); line-height: 1.4; }
 .note.hint b { color: var(--steel); }
 .note.ok-note { color: var(--green); }
+
+/* ---------- slab simulator ---------- */
+.slab-live { touch-action: manipulation; border-radius: 10px; }
+.slab-tab .scrub { flex-wrap: wrap; }
+.slab-tab .scrub .btn { flex: 1; min-width: 92px; }
+.select.speed { flex: 0 0 auto; width: auto; min-height: 40px; padding: 6px 8px; }
+.readout b { color: var(--gold); }
+.btn-row.three { grid-template-columns: repeat(3, 1fr); }
+.face-pair { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 640px) { .face-pair { grid-template-columns: 1fr 1fr; } }
+.face-fig { margin: 0; display: flex; flex-direction: column; gap: 4px; background: #8c8c8c; padding: 10px; border-radius: 10px; }
+.face-canvas { width: 100%; height: auto; display: block; }
+.face-fig figcaption { font: 700 0.7rem var(--mono); color: #111; text-align: center; }
+.optic-note b { color: var(--gold); }
+.step-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.step-card { background: #101010; border: 1px solid var(--border); border-radius: 12px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.step-card.live { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+.step-top { display: flex; gap: 6px; align-items: center; }
+.step-top .select { min-height: 38px; padding: 6px 8px; }
+.step-n { font: 900 0.9rem var(--mono); color: var(--gold); min-width: 2ch; text-align: center; }
+.btn.ico { min-width: 38px; min-height: 38px; padding: 4px; flex: none; }
+.step-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.step-grid .num { padding-right: 30px; min-height: 38px; padding-top: 6px; padding-bottom: 6px; font-size: 0.9rem; }
+.step-grid .unit { right: 7px; }
+.step-na { min-height: 38px; display: flex; align-items: center; color: var(--muted); padding-left: 10px; }
+.slab-bed { margin: 0 -6px; }
+@media (max-width: 480px) { .tabs .seg-btn { padding: 8px 3px; font-size: 0.72rem; letter-spacing: 0.03em; } }
