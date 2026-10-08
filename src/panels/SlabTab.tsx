@@ -5,7 +5,7 @@ import { Num, Section, Segmented, Slider, Toggle } from '../components/Fields';
 import {
   ACTIONS, DEFAULT_OPTICS, DEFAULT_TRACE, type Face, type FaceGrid, GH, GW, type Optics, PRESETS, PX_PER_MM, type RunSpec, SLAB_H, SLAB_W,
   Sim, type SlabRecord, type Step, type StepAction, type TraceOptions, capSequence1, cloneGrid, cubeSpacing, defaultSlabs, gridForRuns,
-  gridStats, markAlpha, markDepth, mkStep, newSlab, placeOnBed, prismOffset, readCell, runDuration, spotPositions, stepId, traceRuns,
+  gridStats, regionCoverage, markAlpha, markDepth, mkStep, newSlab, placeOnBed, prismOffset, readCell, runDuration, spotPositions, stepId, traceRuns,
 } from '../lib/slab';
 import { canShareGcode, downloadGcode, gcodeFileName, shareGcode } from '../lib/exportFile';
 import { DEFAULT_OPTIMIZE, optimize } from '../lib/optimize';
@@ -14,7 +14,7 @@ import { parseGcode } from '../lib/gcodeParse';
 import { nozzleToPen, reachableArea } from '../lib/machine';
 import { penStart } from '../lib/pipeline';
 import type { Profile } from '../lib/profile';
-import { type KeyVersion, type WalletKey, DRIFT_EVERY, SNAP_DWELL_S, V2_DOT_S, parseAddress, ringRevFor, walletSequence } from '../lib/wallet';
+import { type KeyVersion, type WalletKey, DRIFT_EVERY, SNAP_DWELL_S, TOUR_COLS, TOUR_ROWS, V2_DOT_S, parseAddress, ringRevFor, walletSequence } from '../lib/wallet';
 
 function usePersist<T>(key: string, initial: T) {
   const [v, setV] = useState<T>(() => {
@@ -135,9 +135,11 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
   });
   const [seq, setSeq] = usePersist<{ steps: Step[] }>('penplot.slab.steps.v1', { steps: capSequence1() });
   const [saved, setSaved] = usePersist<{ seqs: Record<string, Step[]> }>('penplot.slab.seqs.v1', { seqs: {} });
-  const [gc, setGcRaw] = usePersist<GcOpts>('penplot.slab.gcode.v1', { ...DEFAULT_TRACE, scale: 1, outline: true, dx: 0, dy: 0 });
+  const [gc, setGcRaw] = usePersist<GcOpts>('penplot.slab.gcode.v2', { ...DEFAULT_TRACE, scale: 1, outline: true, dx: 0, dy: 0 });
   const [cmp, setCmpRaw] = usePersist<Compare>('penplot.slab.compare.v1', { on: false, otherId: 'slab-default-1', otherFace: 'front' });
-  const [wallet, setWallet] = usePersist<{ addr: string; key: WalletKey; version: KeyVersion }>('penplot.slab.wallet.v1', { addr: '0x1a72f7314297B0b8f6808A9248969A8108F49890', key: 'raw', version: 'v2' });
+  const [wallet, setWallet] = usePersist<{ addr: string; key: WalletKey; version: KeyVersion }>('penplot.slab.wallet.v2', { addr: '0x1a72f7314297B0b8f6808A9248969A8108F49890', key: 'raw', version: 'v3' });
+  const PAGE = 40;
+  const [shown, setShown] = useState(PAGE);
   const [pendingRun, setPendingRun] = useState(false);
   const setCfg = (p: Partial<Cfg>) => setCfgRaw((o) => ({ ...o, ...p }));
   const setOptics = (p: Partial<Optics>) => setCfgRaw((o) => ({ ...o, optics: { ...o.optics, ...p } }));
@@ -164,6 +166,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
   }, []);
   const grid = useMemo(() => gridOf(slab, face), [gridOf, slab, face]);
   const stats = useMemo(() => gridStats(grid), [grid]);
+  const coverage = useMemo(() => regionCoverage(grid, TOUR_COLS, TOUR_ROWS), [grid]);
 
   const run: RunSpec = useMemo(() => ({
     name: cfg.seqName || 'Sequence', steps: seq.steps, optics: cfg.optics, multiplier: cfg.multiplier, circleDia: cfg.circleDia,
@@ -362,6 +365,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
   const loadSeq = (name: string) => {
     const steps = PRESETS[name] ? PRESETS[name]() : (saved.seqs[name] ?? []).map((s) => ({ ...s, id: stepId() }));
     setSeq({ steps });
+    setShown(PAGE);
     setCfg({ seqName: name });
   };
   const saveSeq = () => {
@@ -382,6 +386,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
     if (!walletSeq || running) return;
     const steps = walletSeq.steps.map((x) => ({ ...x, id: stepId() }));
     setSeq({ steps });
+    setShown(PAGE);
     setCfg({ seqName: walletSeq.name, optics: walletSeq.optics, circleDia: 0 });
     setSaved((o) => ({ seqs: { ...o.seqs, [walletSeq.name]: steps } }));
     if (andRun) setPendingRun(true);
@@ -429,7 +434,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
     const notes = [
       `Slab Simulator: ${slab.name}, ${face} face, ${runs.length} run(s): ${runs.map((r) => r.name).join(', ') || 'none'}`,
       `Slab ${SLAB_W} x ${SLAB_H} mm at ${fmt(gc.scale * 100)}%, centred on the reachable area${gc.outline ? ', with outline' : ''}`,
-      `Passes under ${fmt(gc.minPassExposure)} s exposure skipped; ${t.dots} dwell/bright dot(s)`,
+      `Passes under ${fmt(gc.minPassExposure)} s and spots under ${fmt(gc.minTotalExposure ?? 0)} s total skipped; ${t.dots} dwell/bright dot(s)`,
     ];
     const result = generateGcode(o.paths.map((pts) => ({ pts })), profile, { title: `Slab ${slab.name} ${face}`, notes, boundsMode: 'clip' });
     return { result, dots: t.dots, strokes: t.paths.length, file: gcodeFileName(`slab-${slab.name}-${face}`) };
@@ -473,7 +478,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
               </>
             )}
             <select className="select speed" value={cfg.speed} onChange={(e) => setCfg({ speed: Number(e.target.value) })} aria-label="Playback speed">
-              {[5, 10, 20, 40, 100].map((v) => <option key={v} value={v}>{v}× speed</option>)}
+              {[5, 10, 20, 40, 60, 100, 300].map((v) => <option key={v} value={v}>{v}× speed{v === 60 ? ' (30 min ≈ 30 s)' : ''}</option>)}
             </select>
           </div>
           <div className="scrub-info">
@@ -494,6 +499,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
             <div><b>{stats.maxE.toFixed(1)}s</b><span>max exposure</span></div>
             <div><b>{stats.maxPasses}</b><span>max passes</span></div>
             <div><b>{Math.round(stats.markedMm2)}</b><span>mm² marked</span></div>
+            <div><b>{coverage.covered}/{coverage.total}</b><span>regions marked</span></div>
           </div>
           <div className="btn-row three">
             <button type="button" className="btn" onClick={exportPng}>🖼 PNG</button>
@@ -564,7 +570,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
               </div>
             </Section>
 
-            <Section title="Wallet sequence" right={walletSeq ? <span className="pill">{walletSeq.decoded.length} keys</span> : undefined}>
+            <Section title="Wallet sequence" right={walletSeq ? <span className="pill">{walletSeq.decoded.length} {walletSeq.rounds ? 'motifs' : 'keys'}</span> : undefined}>
               <label className="field"><span className="field-label">EVM wallet address</span>
                 <input className="num txt wallet-in" type="text" spellCheck={false} autoCapitalize="off" autoCorrect="off" value={wallet.addr}
                   onChange={(e) => setWallet((o) => ({ ...o, addr: e.target.value }))} placeholder="0x…" aria-label="Wallet address" />
@@ -573,24 +579,47 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                 <p className="note wallet-ok">✓ <code>{parsedAddr.checksum}</code>{parsedAddr.fixedCase ? ' (checksum casing applied)' : ' (checksum OK)'}</p>
               ) : <p className="warn">{parsedAddr.error}</p>}
               <Segmented label="Key" value={wallet.key} onChange={(key) => setWallet((o) => ({ ...o, key }))} options={[{ value: 'raw', label: 'Raw key' }, { value: 'hashed', label: 'Hashed key' }]} />
-              <Segmented label="Key version" value={wallet.version} onChange={(version) => setWallet((o) => ({ ...o, version }))} options={[{ value: 'v2', label: 'v2 · circles' }, { value: 'v1', label: 'v1 · lines' }]} />
+              <Segmented label="Key version" value={wallet.version} onChange={(version) => setWallet((o) => ({ ...o, version }))} options={[{ value: 'v3', label: 'v3 · whole slab' }, { value: 'v2', label: 'v2 · circles' }, { value: 'v1', label: 'v1 · lines' }]} />
               <div className="grid2">
                 <button type="button" className="btn" onClick={() => generate(false)} disabled={!walletSeq || running}>Generate</button>
                 <button type="button" className="btn gold" onClick={() => generate(true)} disabled={!walletSeq || running}>Generate &amp; run</button>
               </div>
               {walletSeq && (
                 <details className="wallet-decoded">
-                  <summary>{walletSeq.name} · {walletSeq.opticText} · {walletSeq.steps.length} steps · {fmtDuration(runDuration({ ...run, steps: walletSeq.steps, multiplier: 1, homeDwell: 0 }))}</summary>
+                  <summary>{walletSeq.name} · {walletSeq.opticText} · {walletSeq.rows ?? walletSeq.steps.length} passes · {fmtDuration(runDuration({ ...run, steps: walletSeq.steps, multiplier: 1, homeDwell: 0 }))}</summary>
                   <p className="note">Source: <code>{walletSeq.source}</code></p>
+                  {walletSeq.rounds ? (
+                    <>
+                      <p className="note">{walletSeq.decoded.length} motifs over {walletSeq.rounds.length} round(s) · {walletSeq.steps.length} rows ({walletSeq.rows} passes counting repeats). Each motif jumps (fast, pale) to the next region of a {TOUR_COLS}×{TOUR_ROWS} tour, then draws there.</p>
+                      {walletSeq.rounds.map((r) => (
+                        <details key={r.round} className="round">
+                          <summary>Round {r.round + 1} · {r.motifs.length} motifs</summary>
+                          <ol className="decoded" start={r.motifs[0]?.pos ?? 1}>
+                            {r.motifs.map((d) => <li key={d.pos}><b>{d.ch}</b> → {d.text}</li>)}
+                          </ol>
+                        </details>
+                      ))}
+                    </>
+                  ) : (
                   <ol className="decoded" start={1}>
                     <li><b>{walletSeq.source.slice(0, 2)}</b> → {walletSeq.opticText}</li>
                     {walletSeq.decoded.map((d) => <li key={d.pos}><b>{d.ch}</b> → {d.text}</li>)}
                   </ol>
+                  )}
                 </details>
               )}
               <details className="wallet-key">
                 <summary>Key — how an address becomes a sequence ({wallet.version})</summary>
-                {wallet.version === 'v2' ? (
+                {wallet.version === 'v3' ? (
+                <ul className="steps">
+                  <li><b>Endless stream:</b> Raw re-reads the 40 checksummed chars every round with a different stride and rotation (7, 11, 13… steps apart). Hashed chains keccak-256: h₁ = keccak(address bytes), h₂ = keccak(h₁), and so on. Chars are read in pairs (one byte each).</li>
+                  <li>Byte 1 picks the optic (as in v1/v2). Byte 2 sets the <b>run length: 10 + (byte mod 21) minutes</b>. Motifs keep coming until that time is reached.</li>
+                  <li><b>Whole slab:</b> the face is split into a {TOUR_COLS}×{TOUR_ROWS} grid. The stream shuffles the regions into a tour, so every region gets a motif each lap. Each motif starts with a fast positioning jump straight to an absolute spot in its region (pale, skipped in G-code), so marks reach the edges. Cube and prism spot spread and ring sizes are respected.</li>
+                  <li><b>Motif:</b> a header byte sets the jitter inside the region, the speed tier (pale, medium or bright) and 4–8 primitives. Each primitive byte uses the v2 vocabulary: <b>ring move</b> (rings ⌀3–20 mm), <b>arc</b> 5–150° (with rings on a capital), <b>circle</b> ⌀1–20 mm ×1–4, or <b>spiral</b> ⌀3–20 mm. Plain lines and arcs are etched in 2 or 4 out-and-back passes.</li>
+                  <li><b>No saturation:</b> each motif ends with a 1–6 s dot, but no 4 mm spot gets more than 12 s of dot time. Pass length scales with the run length, so even a 10-minute run has hundreds of passes.</li>
+                  <li>Same address + key + version = the same run, every time.</li>
+                </ul>
+                ) : wallet.version === 'v2' ? (
                 <ul className="steps">
                   <li><b>Raw</b> uses the 40 checksummed address characters; <b>Hashed</b> uses keccak-256 of the 20 address bytes (first 40 hex chars, checksum-cased). The <b>first 2 chars</b> pick the optic, same as v1.</li>
                   <li>The other 38 chars are read as <b>19 pairs</b>. First char's top 2 bits = action: <b>0 ring move</b> (the slab slides while the spot traces rings), <b>1 arc</b> (rotation about the slab centre, with rings if the 2nd char is a capital), <b>2 circle</b> (repeated 1–4×), <b>3 spiral</b> (outward, 3 turns; 5 if 2nd char is a capital).</li>
@@ -624,7 +653,7 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                 <button type="button" className="btn danger" onClick={deleteSeq} disabled={!!PRESETS[cfg.seqName] || !saved.seqs[cfg.seqName]}>✕</button>
               </div>
               <ol className="step-list">
-                {seq.steps.map((s, i) => (
+                {seq.steps.slice(0, shown).map((s, i) => (
                   <li key={s.id} className={prog && prog.step === i ? 'step-card live' : 'step-card'}>
                     <div className="step-top">
                       <b className="step-n">{i + 1}</b>
@@ -647,6 +676,13 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
                   </li>
                 ))}
               </ol>
+              {seq.steps.length > shown && (
+                <div className="grid2">
+                  <button type="button" className="btn" onClick={() => setShown((n) => n + PAGE)}>Show {Math.min(PAGE, seq.steps.length - shown)} more</button>
+                  <button type="button" className="btn" onClick={() => setShown(seq.steps.length)}>Show all {seq.steps.length}</button>
+                </div>
+              )}
+              {seq.steps.length > PAGE && <p className="note tiny">{seq.steps.length} rows · showing {Math.min(shown, seq.steps.length)}. New steps are added at the end.</p>}
               <div className="btn-row">
                 <button type="button" className="btn" onClick={() => setSteps((l) => [...l, mkStep('up', 1, 1, 1)])}>+ Step</button>
                 <button type="button" className="btn" onClick={() => setSteps((l) => [...l, mkStep('dwell', 0, 5, 1)])}>+ Dwell</button>
@@ -663,7 +699,8 @@ export function SlabTab({ profile, nav }: { profile: Profile; nav: ReactNode }) 
             <Section title="Pen plot G-code" right={<span className="pill">{job.strokes} strokes</span>}>
               <p className="note">Turns the spot trails on this face into pen strokes: every pass becomes a line, long dwells become small dots, and the slab is centred on your {profile.name} bed. Uses your Printer profile (pen heights, offset, lifts).</p>
               <div className="grid2">
-                <Num label="Skip passes under" value={gc.minPassExposure} onChange={(minPassExposure) => setGc({ minPassExposure })} min={0} max={30} step={0.1} unit="s" hint="Fast moves leave pale marks; skip them" />
+                <Num label="Skip passes under" value={gc.minPassExposure} onChange={(minPassExposure) => setGc({ minPassExposure })} min={0} max={30} step={0.1} unit="s" hint="Fast jumps leave almost nothing; skip them" />
+                <Num label="Draw where total ≥" value={gc.minTotalExposure ?? 0.5} onChange={(minTotalExposure) => setGc({ minTotalExposure })} min={0} max={60} step={0.1} unit="s" hint="Only where the mark is visible" />
                 <Num label="Scale" value={Math.round(gc.scale * 100)} onChange={(v) => setGc({ scale: v / 100 })} min={10} max={140} step={5} unit="%" decimals={0} />
                 <Num label="Nudge X" value={gc.dx} onChange={(dx) => setGc({ dx })} step={1} unit="mm" />
                 <Num label="Nudge Y" value={gc.dy} onChange={(dy) => setGc({ dy })} step={1} unit="mm" />

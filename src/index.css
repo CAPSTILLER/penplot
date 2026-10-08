@@ -278,3 +278,4 @@ footer p { margin: 4px 0; }
 .wallet-decoded .note code { word-break: break-all; }
 .decoded { margin: 6px 0 0; padding-left: 26px; font: 600 0.72rem/1.5 var(--mono); color: #cfcfcf; max-height: 320px; overflow: auto; }
 .decoded b { color: var(--gold); }
+.round summary { font: 700 0.74rem var(--mono); color: var(--steel); cursor: pointer; padding: 3px 0; }

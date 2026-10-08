@@ -3,10 +3,10 @@
  * Two keys: Raw (the 40 checksummed address chars) and Hashed (keccak-256 of the 20 address bytes).
  */
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { type Optics, type Step, type StepAction, mkStep, spotPositions } from './slab';
+import { type Optics, type Pt, type Step, type StepAction, SLAB_H, SLAB_W, mkStep, spotPositions } from './slab';
 
 export type WalletKey = 'raw' | 'hashed';
-export type KeyVersion = 'v1' | 'v2';
+export type KeyVersion = 'v1' | 'v2' | 'v3';
 
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const keccakHex = (s: string) => hex(keccak_256(new TextEncoder().encode(s)));
@@ -41,7 +41,13 @@ export function sourceChars(lowerAddr: string, key: WalletKey): string {
 }
 
 export interface Decoded { pos: number; ch: string; text: string }
-export interface WalletSequence { name: string; source: string; optics: Optics; steps: Step[]; decoded: Decoded[]; opticText: string }
+export interface WalletSequence {
+  name: string; source: string; optics: Optics; steps: Step[]; decoded: Decoded[]; opticText: string;
+  /** v3: decoded motifs grouped by round, target minutes, stats */
+  rounds?: { round: number; motifs: Decoded[] }[];
+  targetMin?: number;
+  rows?: number;
+}
 
 const MOVE_MM = [1, 2, 3, 5];
 const ROT_DEG = [5, 10, 15, 30];
@@ -61,8 +67,8 @@ export function walletBounds(optics: Optics) {
   };
 }
 
-export function walletSequence(address: string, key: WalletKey, version: KeyVersion = 'v2'): WalletSequence {
-  return version === 'v2' ? walletSequenceV2(address, key) : walletSequenceV1(address, key);
+export function walletSequence(address: string, key: WalletKey, version: KeyVersion = 'v3'): WalletSequence {
+  return version === 'v3' ? walletSequenceV3(address, key) : version === 'v2' ? walletSequenceV2(address, key) : walletSequenceV1(address, key);
 }
 
 function walletSequenceV1(address: string, key: WalletKey): WalletSequence {
@@ -256,3 +262,191 @@ function walletSequenceV2(address: string, key: WalletKey): WalletSequence {
   return { name: `Wallet ${c.slice(0, 6)}…${c.slice(-4)} (${key} v2)`, source: src, optics, steps, decoded, opticText };
 }
 const fmtS = (s: number) => `${Math.round(s * 10) / 10} s`;
+
+// ------------------------------------------------------------------ v3: whole-face tour, 10-30 min runs
+
+export const TOUR_COLS = 6, TOUR_ROWS = 3;
+const STRIDES = [7, 11, 13, 17, 19, 23, 29, 31, 37, 3, 9, 21, 27, 33, 39];
+/** speed tiers: pale (fast), medium, bright (slow) */
+const TIER_NAMES = ['pale', 'medium', 'bright'];
+const LINE_V = [4, 1.5, 0.7]; // mm/s
+const RING_V = [5, 3, 1.5]; // mm/s around a ring / circle / spiral
+const MAX_DWELL_PER_CELL = 12; // s of dot dwell allowed per 4 mm cell
+const POS_V = 40; // mm/s positioning (pale, skipped in G-code)
+const MAX_RUN_S = 30 * 60;
+
+interface Pair { hi: number; lo: number; up1: boolean; up2: boolean; round: number }
+
+/** Endless, deterministic stream of byte pairs from the address. */
+export function* pairStream(lowerAddr: string, key: WalletKey): Generator<Pair> {
+  const body = lowerAddr.replace(/^0x/i, '').toLowerCase();
+  const caseBit = (ch: string, pos: number) => (/[a-fA-F]/.test(ch) ? ch === ch.toUpperCase() : (parseInt(ch, 16) + pos) % 2 === 0);
+  if (key === 'raw') {
+    const src = caseByHash(body);
+    const first = parseInt(src.slice(0, 2), 16);
+    for (let round = 0; ; round++) {
+      const stride = round === 0 ? 1 : STRIDES[(round - 1) % STRIDES.length];
+      const off = round === 0 ? 0 : (round * 13 + first) % 40;
+      for (let k = 0; k < 40; k += 2) {
+        const a = (off + k * stride) % 40, b = (off + (k + 1) * stride) % 40;
+        yield { hi: parseInt(src[a], 16), lo: parseInt(src[b], 16), up1: caseBit(src[a], k + round), up2: caseBit(src[b], k + 1 + round), round };
+      }
+    }
+  } else {
+    let h = keccak_256(new Uint8Array(body.match(/../g)!.map((x) => parseInt(x, 16))));
+    for (let round = 0; ; round++) {
+      const src = caseByHash(hex(h));
+      for (let k = 0; k < 64; k += 2) {
+        yield { hi: parseInt(src[k], 16), lo: parseInt(src[k + 1], 16), up1: caseBit(src[k], k + round), up2: caseBit(src[k + 1], k + 1 + round), round };
+      }
+      h = keccak_256(h); // keccak chain h(n+1) = keccak(h(n))
+    }
+  }
+}
+
+function walletSequenceV3(address: string, key: WalletKey): WalletSequence {
+  const p = parseAddress(address);
+  if (!p.ok) throw new Error(p.error);
+  const src = sourceChars(p.lower, key);
+  const stream = pairStream(p.lower, key);
+  const next = () => stream.next().value as Pair;
+  const op = next();
+  const { optics, opticText } = opticFrom(op.hi.toString(16) + op.lo.toString(16));
+  const tp = next();
+  const targetMin = 10 + (((tp.hi << 4) | tp.lo) % 21);
+  const target = targetMin * 60;
+  // shorter runs use shorter passes so every run still has hundreds of rows
+  const pace = Math.min(1.4, Math.max(0.55, targetMin / 20));
+  const spots = spotPositions(optics);
+  const ax = spots.reduce((a, q) => a + q.x, 0) / spots.length; // anchor = middle of the spot pattern
+  const spread = Math.max(...spots.map((q) => Math.abs(q.x - ax)));
+  const SPOT_R = 1;
+  const HX = SLAB_W / 2, HY = SLAB_H / 2;
+  // anchor (pattern centre) may roam this rectangle with rot = 0
+  const roamX = Math.max(4, HX - spread - SPOT_R - 2), roamY = HY - SPOT_R - 2;
+  // pose
+  let tx = 0, ty = 0, rot = 0, total = 0, rows = 0;
+  const steps: Step[] = [];
+  const push = (st: Step) => { steps.push(st); total += st.duration * st.repeat; rows += st.repeat; };
+  const onSlab = (x: number, y: number, r: number): Pt[] => {
+    const a = (r * Math.PI) / 180, c = Math.cos(a), sn = Math.sin(a);
+    return spots.map((q) => { const dx = q.x - x, dy = q.y - y; return { x: c * dx - sn * dy, y: sn * dx + c * dy }; });
+  };
+  /** every spot (plus margin) on the face at this pose */
+  const fits = (x: number, y: number, r: number, m: number) => onSlab(x, y, r).every((q) => Math.abs(q.x) <= HX - m && Math.abs(q.y) <= HY - m);
+  const anchorNow = () => { const a = (rot * Math.PI) / 180, c = Math.cos(a), sn = Math.sin(a); const dx = ax - tx, dy = -ty; return { x: c * dx - sn * dy, y: sn * dx + c * dy }; };
+  /** room for a circle of radius r around the anchor */
+  const roomR = () => {
+    for (let r = 10; r >= 0.5; r -= 0.5) if (fits(tx, ty, rot, r + SPOT_R + 0.5)) return r;
+    return 0.5;
+  };
+  const dwellUsed = new Map<string, number>();
+  const rounds: { round: number; motifs: Decoded[] }[] = [];
+  const cellW = (2 * roamX) / TOUR_COLS, cellH = (2 * roamY) / TOUR_ROWS;
+  let tour: number[] = [];
+  let motifNo = 0;
+  while (total < target && motifNo < 400) {
+    // ---- next region in a stream-shuffled tour (every region once per lap)
+    if (!tour.length) {
+      tour = Array.from({ length: TOUR_COLS * TOUR_ROWS }, (_, i) => i);
+      for (let i = tour.length - 1; i > 0; i--) { const q = next(); const j = ((q.hi << 4) | q.lo) % (i + 1); [tour[i], tour[j]] = [tour[j], tour[i]]; }
+    }
+    const cell = tour.shift()!;
+    const head = next();
+    const col = cell % TOUR_COLS, row = Math.floor(cell / TOUR_COLS);
+    const X = -roamX + (col + 0.5 + (head.hi / 15 - 0.5) * 0.7) * cellW;
+    const Y = roamY - (row + 0.5 + (head.lo / 15 - 0.5) * 0.7) * cellH;
+    const tier = [0, 1, 2, 1][(head.hi ^ head.lo) & 3];
+    const k = 4 + ((head.hi + head.lo) % 5);
+    const startRows = rows, startT = total;
+    const parts: string[] = [];
+    // ---- positioning (fast & pale): rotate back to 0, then go straight to the target
+    if (Math.abs(rot) > 0.01) { const a = Math.abs(rot); push(mkStep(rot > 0 ? 'ccw' : 'cw', round1(a), round1(Math.max(0.3, a / 60)), 1)); rot = 0; }
+    const ntx = ax - X, nty = -Y; // slab translation that puts the anchor at (X, Y)
+    const dx = round1(ntx - tx), dy = round1(nty - ty);
+    if (Math.abs(dx) >= 0.1) push(mkStep(dx > 0 ? 'right' : 'left', Math.abs(dx), round1(Math.max(0.3, Math.abs(dx) / POS_V)), 1));
+    if (Math.abs(dy) >= 0.1) push(mkStep(dy > 0 ? 'up' : 'down', Math.abs(dy), round1(Math.max(0.3, Math.abs(dy) / POS_V)), 1));
+    tx += dx; ty += dy;
+    // ---- k local primitives
+    for (let i = 0; i < k && total < MAX_RUN_S - 60; i++) {
+      const q = next();
+      const act = q.hi >> 2;
+      const v = LINE_V[tier], rv = RING_V[tier];
+      if (act === 0 || act === 1) {
+        const isMove = act === 0;
+        const ringSel = q.hi & 3;
+        let ringDia = ringSel && (isMove || q.up2) ? RING16[ringSel * 4 + (q.lo & 3)] : 0;
+        ringDia = Math.min(ringDia, Math.floor(roomR() * 2 * 2) / 2);
+        const m = ringDia / 2 + SPOT_R + 0.5;
+        const sg0 = q.up1 ? 1 : -1;
+        const full = isMove ? MOVE16[q.lo] : ROT16[q.lo];
+        const tryPose = (sg: number, amt: number): [number, number, number] =>
+          isMove ? (q.up2 ? [tx, ty + sg * amt, rot] : [tx + sg * amt, ty, rot]) : [tx, ty, rot + sg * amt];
+        let chosen: [number, number] | null = null;
+        for (const f of [1, 0.75, 0.5, 0.25]) {
+          for (const sg of [sg0, -sg0]) {
+            const amt = round1(full * f);
+            const ok = isMove ? fits(...tryPose(sg, amt), m) : [0.25, 0.5, 0.75, 1].every((g) => fits(tx, ty, rot + sg * amt * g, m));
+            if (amt > 0 && ok) { chosen = [sg, amt]; break; }
+          }
+          if (chosen) break;
+        }
+        if (!chosen) continue;
+        const [sg, amt] = chosen;
+        const r = Math.max(5, Math.hypot(anchorNow().x, anchorNow().y));
+        [tx, ty, rot] = tryPose(sg, amt);
+        const action: StepAction = isMove ? (q.up2 ? (sg > 0 ? 'up' : 'down') : (sg > 0 ? 'right' : 'left')) : (sg > 0 ? 'cw' : 'ccw');
+        const pathLen = isMove ? amt : (r * amt * Math.PI) / 180;
+        let dur: number;
+        const st = mkStep(action, amt, 1, 1);
+        if (ringDia > 0) {
+          const rev = Math.max(0.6, round1((Math.PI * ringDia) / rv));
+          dur = Math.min(6 * pace, (pathLen * 2 * rev) / ringDia); // half a ring per turn (capped: long ones spread wider)
+          st.ring = ringDia; st.ringRev = rev;
+        } else dur = Math.min(4 * pace, pathLen / v);
+        st.duration = round1(Math.max(0.5, dur));
+        push(st);
+        // plain lines are etched in several out-and-back passes (each pass deepens the groove)
+        const back = ringDia > 0 ? 0 : 1 + 2 * (q.hi & 1);
+        if (back) {
+          const rev: StepAction = action === 'up' ? 'down' : action === 'down' ? 'up' : action === 'left' ? 'right' : action === 'right' ? 'left' : action === 'cw' ? 'ccw' : 'cw';
+          for (let b = 0; b < back; b++) push(mkStep(b % 2 === 0 ? rev : action, amt, st.duration, 1));
+          if (back % 2 === 1) [tx, ty, rot] = tryPose(-sg, amt);
+        }
+        parts.push(`${isMove ? `${action} ${amt} mm` : `${action.toUpperCase()} ${amt}°`}${ringDia ? ` ⌀${ringDia} rings` : ` ×${1 + back} passes`}`);
+      } else {
+        const want = act === 2 ? RING16[q.lo] : Math.max(3, RING16[q.lo]);
+        const dia = Math.min(want, Math.floor(roomR() * 2 * 2) / 2);
+        if (act === 2) {
+          const reps = 1 + (q.hi & 3);
+          push(mkStep('circle', dia, round1(Math.min(4 * pace, Math.max(0.6, (Math.PI * dia) / rv))), reps));
+          parts.push(`circle ⌀${dia}×${reps}`);
+        } else {
+          const turns = q.up2 ? 5 : 3;
+          push({ ...mkStep('spiral', dia, round1(Math.min(6 * pace, Math.max(1, (Math.PI * (dia / 2) * turns) / rv))), 1), turns });
+          parts.push(`spiral ⌀${dia}`);
+        }
+      }
+    }
+    // ---- end-of-motif dot, capped per 4 mm cell so nothing saturates
+    const an = anchorNow();
+    const ck = `${Math.round(an.x / 4)},${Math.round(an.y / 4)}`;
+    const want = [1, 2, 4, 6][head.lo & 3];
+    const used = dwellUsed.get(ck) ?? 0;
+    const dwell = Math.min(want, MAX_DWELL_PER_CELL - used);
+    if (dwell >= 0.5) { push(mkStep('dwell', 0, dwell, 1)); dwellUsed.set(ck, used + dwell); parts.push(`dot ${dwell} s`); }
+    motifNo++;
+    const text = `region ${String.fromCharCode(65 + col)}${row + 1} · ${TIER_NAMES[tier]} · ${parts.join(', ')} · ${rows - startRows} rows, ${fmtS(total - startT)}`;
+    let rd = rounds.find((x) => x.round === head.round);
+    if (!rd) { rd = { round: head.round, motifs: [] }; rounds.push(rd); }
+    rd.motifs.push({ pos: motifNo, ch: (head.hi.toString(16) + head.lo.toString(16)), text });
+    if (total >= MAX_RUN_S - 60) break;
+  }
+  const c = p.checksum;
+  const decoded = rounds.flatMap((r) => r.motifs);
+  return {
+    name: `Wallet ${c.slice(0, 6)}…${c.slice(-4)} (${key} v3)`, source: src, optics,
+    opticText: `${opticText} · target ${targetMin} min`, steps, decoded, rounds, targetMin, rows,
+  };
+}
+const round1 = (n: number) => Math.round(n * 10) / 10;

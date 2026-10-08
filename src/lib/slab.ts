@@ -6,6 +6,7 @@
  * Slab pose: translation (tx, ty) of its centre in mm and rotation `rot` in degrees, clockwise positive.
  */
 import { type Polyline, type Pt, simplify } from './geometry';
+export type { Pt };
 import { clipPolylines } from './clip';
 
 export const SLAB_W = 150;
@@ -336,6 +337,20 @@ export function gridStats(g: FaceGrid): { maxE: number; maxPasses: number; marke
   return { maxE, maxPasses, markedMm2: cells / (PX_PER_MM * PX_PER_MM) };
 }
 
+/** Fraction of a cols x rows grid of face regions that carry visible marks (>= minE s on >= minFrac of the cell). */
+export function regionCoverage(g: FaceGrid, cols = 6, rows = 3, minE = 0.5, minFrac = 0.01): { covered: number; total: number; frac: number } {
+  let covered = 0;
+  const cw = GW / cols, ch = GH / rows;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      let n = 0, tot = 0;
+      for (let y = Math.floor(r * ch); y < Math.floor((r + 1) * ch); y += 2)
+        for (let x = Math.floor(c * cw); x < Math.floor((c + 1) * cw); x += 2) { tot++; if (g.e[x + y * GW] >= minE) n++; }
+      if (n / tot >= minFrac) covered++;
+    }
+  return { covered, total: cols * rows, frac: covered / (cols * rows) };
+}
+
 export function readCell(g: FaceGrid, x: number, y: number): { e: number; passes: number } | null {
   const { gx, gy } = toGrid(x, y);
   const cx = Math.floor(gx), cy = Math.floor(gy);
@@ -353,11 +368,13 @@ export interface TraceOptions {
   dwellMin: number;
   /** lift the pen where a pass retraces a line that was already drawn (longer than 1.5 mm) */
   skipRetrace: boolean;
+  /** with the exposure map: only draw where the total exposure (all passes) is at least this many seconds */
+  minTotalExposure?: number;
   /** also dot small, compact bright spots in the exposure map (pass crossings) */
   brightDots: boolean;
   brightMin: number;
 }
-export const DEFAULT_TRACE: TraceOptions = { minPassExposure: 0.3, dwellDots: true, dwellMin: 2, skipRetrace: true, brightDots: false, brightMin: 4 };
+export const DEFAULT_TRACE: TraceOptions = { minPassExposure: 0.06, minTotalExposure: 0.5, dwellDots: true, dwellMin: 2, skipRetrace: true, brightDots: false, brightMin: 4 };
 
 /** Centres of compact (< 4 mm) regions whose exposure is at least `min` seconds. */
 export function brightSpots(g: FaceGrid, min: number, maxSize = 4): Pt[] {
@@ -440,7 +457,8 @@ export function traceRuns(runs: RunSpec[], o: TraceOptions = DEFAULT_TRACE, grid
           continue;
         }
         if (dwellAt && Math.hypot(p.x - dwellAt.x, p.y - dwellAt.y) > D / 2) flushDwell();
-        const exposed = D / Math.max(1e-9, speed) >= o.minPassExposure;
+        let exposed = D / Math.max(1e-9, speed) >= o.minPassExposure;
+        if (exposed && grid && (o.minTotalExposure ?? 0) > 0) exposed = (readCell(grid, p.x, p.y)?.e ?? 0) >= (o.minTotalExposure ?? 0);
         let state = exposed ? 1 : 0;
         if (exposed && o.skipRetrace) {
           const c = covIdx(p);

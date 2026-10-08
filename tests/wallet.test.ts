@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseAddress, sourceChars, walletBounds, walletSequence } from '../src/lib/wallet';
-import { sampleRun } from '../src/lib/slab';
+import { gridForRuns, regionCoverage, runDuration, sampleRun } from '../src/lib/slab';
 
 const CAP = '0x1a72f7314297B0b8f6808A9248969A8108F49890';
 const LEDGER = '0xD8382719b8fF90eE3Dd521B9d7c5dc23E8e4EAca';
@@ -30,7 +30,8 @@ describe('wallet sequence', () => {
     expect(sourceChars(CAP, 'raw')).toBe(CAP.slice(2));
     expect(sourceChars(CAP, 'hashed')).not.toBe(sourceChars(CAP, 'raw'));
     expect(walletSequence(CAP, 'raw', 'v1').name).toBe('Wallet 0x1a72…9890 (raw v1)');
-    expect(walletSequence(CAP, 'raw').name).toBe('Wallet 0x1a72…9890 (raw v2)');
+    expect(walletSequence(CAP, 'raw', 'v2').name).toBe('Wallet 0x1a72…9890 (raw v2)');
+    expect(walletSequence(CAP, 'raw').name).toBe('Wallet 0x1a72…9890 (raw v3)');
   });
 
   it('keeps the centre spot inside the safe bounds', () => {
@@ -71,4 +72,25 @@ describe('wallet key v2 (circle-heavy)', () => {
     expect(Math.min(...dias)).toBeLessThanOrEqual(3);
     expect(Math.max(...dias)).toBeGreaterThanOrEqual(14);
   });
+});
+
+describe('wallet key v3 (whole slab, 10-30 min)', () => {
+  const strip = (w: ReturnType<typeof walletSequence>) => JSON.stringify({ ...w, steps: w.steps.map(({ id: _, ...s }) => s) });
+  it('is deterministic', () => {
+    for (const key of ['raw', 'hashed'] as const) expect(strip(walletSequence(CAP, key, 'v3'))).toBe(strip(walletSequence(CAP.toLowerCase(), key, 'v3')));
+    expect(strip(walletSequence(CAP, 'raw', 'v3'))).not.toBe(strip(walletSequence(CAP, 'hashed', 'v3')));
+  });
+  it('runs 10-30 min, marks >= 80% of the 6x3 regions, and has >= 200 passes', () => {
+    for (const addr of [CAP, LEDGER, '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed', '0xCF1ac98565DA846E8263604b49C1276Ed78A0981'])
+      for (const key of ['raw', 'hashed'] as const) {
+        const w = walletSequence(addr, key, 'v3');
+        const run = { name: '', steps: w.steps, optics: w.optics, multiplier: 1, circleDia: 0, circleRev: 4, spotDia: 1.75 };
+        const min = runDuration(run) / 60;
+        expect(min, `${addr} ${key}`).toBeGreaterThanOrEqual(10);
+        expect(min, `${addr} ${key}`).toBeLessThanOrEqual(30);
+        expect(w.rows!, `${addr} ${key}`).toBeGreaterThanOrEqual(200);
+        const cov = regionCoverage(gridForRuns([run]), 6, 3);
+        expect(cov.frac, `${addr} ${key}`).toBeGreaterThanOrEqual(0.8);
+      }
+  }, 60000);
 });
